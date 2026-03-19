@@ -245,7 +245,7 @@
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Projetos no grafico:</label>
                         <div id="variacaoRefBtns" class="flex flex-wrap gap-2"></div>
                     </div>
-                    <div style="max-height:400px;"><canvas id="chartVariacaoRef"></canvas></div>
+                    <div style="height:350px;position:relative;"><canvas id="chartVariacaoRef"></canvas></div>
                     <div class="mt-6 overflow-x-auto">
                         <table class="w-full text-sm" id="tabelaVariacaoRefFull">
                             <thead class="bg-yellow-50" id="theadVariacaoRef"></thead>
@@ -1163,11 +1163,14 @@
                     plugins: [ChartDataLabels],
                     options: {
                         responsive: true,
-                        maintainAspectRatio: true,
-                        animation: { duration: 0 },
+                        maintainAspectRatio: false,
+                        animation: false,
+                        transitions: { active: { animation: { duration: 0 } } },
+                        hover: { animationDuration: 0 },
                         interaction: { mode: 'nearest', intersect: true },
                         plugins: {
                             legend: { display: selecionados.length > 1, position: 'top', labels: { usePointStyle: true, padding: 15 } },
+                            tooltip: { animation: false },
                             datalabels: {
                                 display: ctx => ctx.dataset.data[ctx.dataIndex] > 0,
                                 color: ctx => ctx.dataset.borderColor,
