@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard de Gestao de Despesas</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.17/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <style>
@@ -1695,28 +1696,37 @@
             const status = document.getElementById('loading-status');
 
             try {
-                status.textContent = 'Buscando imoveis, refeicoes, colaboradores e dias trabalhados...';
-                const [resImo, resRef, resColab, resDias, resAlojAprox] = await Promise.all([
+                // 1. Carregar dados principais primeiro (SQL - rápido)
+                status.textContent = 'Buscando imoveis, refeicoes e colaboradores...';
+                const [resImo, resRef, resColab, resAlojAprox] = await Promise.all([
                     fetch('/api/imoveis'),
                     fetch('/api/refeicao'),
                     fetch('/api/colaboradores?inicio=2025-01&fim=2026-12'),
-                    fetch('/api/dias-trabalhados'),
                     fetch('/api/alojados-aprox')
                 ]);
 
                 if (!resImo.ok || !resRef.ok || !resColab.ok) throw new Error('Falha ao buscar dados do servidor');
 
-                const [imoveis, refeicao, colabResp, diasResp, alojAproxResp] = await Promise.all([
-                    resImo.json(), resRef.json(), resColab.json(), resDias.ok ? resDias.json() : [], resAlojAprox.ok ? resAlojAprox.json() : {}
+                const [imoveis, refeicao, colabResp, alojAproxResp] = await Promise.all([
+                    resImo.json(), resRef.json(), resColab.json(), resAlojAprox.ok ? resAlojAprox.json() : {}
                 ]);
 
-                // Filtrar AGOSTO/25 de todos os dados
                 const MES_IGNORADO = 'AGOSTO/25';
                 dadosImoveis = imoveis.filter(d => d.MES !== MES_IGNORADO);
                 dadosRefeicao = refeicao.filter(d => d.MES !== MES_IGNORADO);
                 dadosColaboradores = (colabResp.dados || colabResp).filter(d => d.DATA !== MES_IGNORADO);
-                dadosDiasTrabalhados = diasResp.filter(d => d.MES !== MES_IGNORADO);
                 alojadosAprox = alojAproxResp;
+
+                // 2. Dias trabalhados separado (Secullum - lento, pode demorar 2+ min)
+                status.textContent = 'Buscando dias trabalhados (Secullum)... pode demorar';
+                try {
+                    const resDias = await fetch('/api/dias-trabalhados', { signal: AbortSignal.timeout(300000) });
+                    const diasResp = resDias.ok ? await resDias.json() : [];
+                    dadosDiasTrabalhados = diasResp.filter(d => d.MES !== MES_IGNORADO);
+                } catch (eDias) {
+                    console.warn('[Servidor] Dias trabalhados indisponivel:', eDias.message);
+                    dadosDiasTrabalhados = [];
+                }
 
                 console.log(`[Servidor] Imoveis: ${dadosImoveis.length}, Refeicoes: ${dadosRefeicao.length}, Colaboradores: ${dadosColaboradores.length}, DiasTrab: ${dadosDiasTrabalhados.length}, AlojAprox: ${Object.keys(alojadosAprox).length} projetos`);
             } catch (e) {

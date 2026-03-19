@@ -149,7 +149,8 @@ async function secullumGet(endpoint, bancoId) {
     headers: {
       Authorization: `Bearer ${token}`,
       secullumidbancoselecionado: String(bancoId)
-    }
+    },
+    signal: AbortSignal.timeout(60000)
   });
   if (!res.ok) {
     console.warn(`[Secullum] Erro ${res.status} em ${endpoint} banco ${bancoId}`);
