@@ -2,7 +2,7 @@ const express = require('express');
 const sql = require('mssql');
 const path = require('path');
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Servir arquivos estáticos
 app.use(express.static(path.join(__dirname)));
