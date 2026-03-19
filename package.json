@@ -1,0 +1,22 @@
+{
+  "name": "dashelaine",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Dashboard de Gestao de Despesas - ALR Florestal",
+  "dependencies": {
+    "compression": "^1.8.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "mssql": "^12.2.0"
+  }
+}

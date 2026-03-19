@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Gestao de Despesas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .dropdown-filtro { position: relative; width: 100%; }
+        .dropdown-btn { width: 100%; padding: 0.5rem 1rem; border: 1px solid #d1d5db; border-radius: 0.375rem; background-color: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+        .dropdown-btn:hover { border-color: #9ca3af; background-color: #f9fafb; }
+        .dropdown-content { display: none; position: absolute; width: 100%; max-height: 250px; overflow-y: auto; background-color: white; border: 1px solid #d1d5db; border-radius: 0.375rem; margin-top: 0.25rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); z-index: 1000; }
+        .dropdown-content.show { display: block; }
+        .dropdown-item { padding: 0.5rem 1rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; transition: background-color 0.2s; }
+        .dropdown-item:hover { background-color: #f3f4f6; }
+        .dropdown-item input[type="checkbox"] { cursor: pointer; }
+        .dropdown-arrow { transition: transform 0.2s; }
+        .dropdown-arrow.open { transform: rotate(180deg); }
+
+        .month-picker { position: relative; width: 100%; }
+        .month-picker-btn { width: 100%; padding: 0.5rem 1rem; border: 1px solid #d1d5db; border-radius: 0.375rem; background-color: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; font-size: 0.875rem; }
+        .month-picker-btn:hover { border-color: #3b82f6; background-color: #f9fafb; }
+        .month-picker-panel { display: none; position: absolute; width: 320px; background-color: white; border: 1px solid #d1d5db; border-radius: 0.5rem; margin-top: 0.25rem; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15); z-index: 1000; padding: 1rem; }
+        .month-picker-panel.show { display: block; }
+        .month-picker-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+        .month-picker-header button { width: 32px; height: 32px; border-radius: 50%; border: none; background: #f3f4f6; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+        .month-picker-header button:hover { background: #3b82f6; color: white; }
+        .month-picker-year { font-weight: 700; font-size: 1rem; color: #1f2937; }
+        .month-picker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.375rem; }
+        .month-picker-cell { padding: 0.5rem 0.25rem; text-align: center; border-radius: 0.375rem; cursor: pointer; font-size: 0.75rem; font-weight: 500; transition: all 0.15s; border: 2px solid transparent; color: #374151; }
+        .month-picker-cell:hover { background: #eff6ff; border-color: #bfdbfe; }
+        .month-picker-cell.selected { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .month-picker-cell.disabled { color: #d1d5db; cursor: not-allowed; }
+        .month-picker-cell.disabled:hover { background: transparent; border-color: transparent; }
+        .month-picker-actions { display: flex; justify-content: space-between; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #e5e7eb; }
+        .month-picker-actions button { padding: 0.35rem 0.75rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+        .mp-btn-clear { background: #f3f4f6; color: #6b7280; }
+        .mp-btn-clear:hover { background: #e5e7eb; }
+
+        @media print {
+            body { background: white !important; font-size: 10px; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+            .tab-content { display: none !important; }
+            .tab-content.print-active { display: block !important; }
+            .shadow-md { box-shadow: none !important; }
+            .rounded-lg { border-radius: 0 !important; }
+            table { border-collapse: collapse; width: 100%; page-break-inside: auto; }
+            th, td { border: 1px solid #ccc !important; padding: 3px 5px !important; font-size: 9px !important; }
+            tr { page-break-inside: avoid; }
+            .bg-white { background: white !important; }
+            canvas { max-height: 200px !important; }
+            h1 { font-size: 16px !important; }
+            h3 { font-size: 12px !important; }
+            .print-header { display: block !important; text-align: center; margin-bottom: 12px; border-bottom: 2px solid #1e40af; padding-bottom: 10px; }
+            .print-header h1 { font-size: 18px !important; color: #1e40af; }
+            .print-header .print-subtitle { font-size: 13px; color: #374151; margin-top: 4px; }
+            .print-header .print-info { font-size: 10px; color: #6b7280; margin-top: 6px; }
+            .print-footer { display: block !important; position: fixed; bottom: 0; left: 0; right: 0; text-align: center; font-size: 8px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding: 4px 0; }
+            .min-h-screen { min-height: auto !important; padding: 8px !important; }
+            .space-y-6 > * + * { margin-top: 12px !important; }
+            .p-6 { padding: 8px !important; }
+            .mb-8 { margin-bottom: 8px !important; }
+            .grid.grid-cols-1.md\\:grid-cols-3 { gap: 8px !important; }
+            @page { margin: 10mm 8mm; size: landscape; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="min-h-screen p-6">
+        <!-- Header -->
+        <div class="mb-8 no-print">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">Dashboard de Gestao de Despesas</h1>
+            <p class="text-gray-600">Relatorio Completo - Imoveis e Refeicoes</p>
+        </div>
+        <div class="print-header" style="display:none;">
+            <h1 class="text-xl font-bold">ALR Florestal / Larsil - Relatorio de Despesas</h1>
+            <p class="print-subtitle" id="printSubtitle"></p>
+            <p class="print-info" id="printInfo"></p>
+        </div>
+        <div class="print-footer" style="display:none;">
+            Dashboard de Gestao de Despesas - ALR Florestal | Gerado automaticamente
+        </div>
+
+        <!-- Cards de Resumo -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 no-print">
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
+                <p class="text-gray-500 text-sm font-medium">Total Despesas Imoveis</p>
+                <p class="text-2xl font-bold text-blue-600 mt-2" id="totalImoveis">R$ 0,00</p>
+                <p class="text-xs text-gray-400 mt-1" id="qtdImoveis">0 lancamentos</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-purple-500">
+                <p class="text-gray-500 text-sm font-medium">Total Despesas Refeicao</p>
+                <p class="text-2xl font-bold text-purple-600 mt-2" id="totalRefeicao">R$ 0,00</p>
+                <p class="text-xs text-gray-400 mt-1" id="qtdRefeicao">0 registros</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500">
+                <p class="text-gray-500 text-sm font-medium">Total Geral</p>
+                <p class="text-2xl font-bold text-green-600 mt-2" id="totalGeral">R$ 0,00</p>
+                <p class="text-xs text-gray-400 mt-1">Consolidado</p>
+            </div>
+        </div>
+
+        <!-- Navegacao por Abas -->
+        <div class="bg-white rounded-lg shadow-md mb-6 no-print">
+            <div class="flex border-b overflow-x-auto">
+                <button onclick="trocarAba('refeicao')" class="px-6 py-4 font-medium transition-colors whitespace-nowrap tab-btn tab-active" data-tab="refeicao">
+                    Refeicoes
+                </button>
+                <button onclick="trocarAba('imoveis')" class="px-6 py-4 font-medium transition-colors whitespace-nowrap text-gray-600 hover:text-gray-800 tab-btn" data-tab="imoveis">
+                    Imoveis
+                </button>
+            </div>
+        </div>
+
+        <!-- ============================== -->
+        <!-- ABA REFEICOES -->
+        <!-- ============================== -->
+        <div id="aba-refeicao" class="tab-content">
+            <div class="space-y-6">
+                <!-- Filtros -->
+                <div class="bg-white rounded-lg shadow-md p-6 no-print">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">Filtros</h3>
+                        <button onclick="exportarRelatorio('refeicao')" class="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors">
+                            Exportar Relatorio
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Mes</label>
+                            <div class="month-picker" id="monthPickerRefeicao"></div>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Projetos</label>
+                            <div class="dropdown-filtro">
+                                <button type="button" class="dropdown-btn" onclick="toggleDropdown('dropdownProjetosRefeicao')">
+                                    <span id="textProjetosRefeicao">Selecionar projetos...</span>
+                                    <span class="dropdown-arrow">&#9660;</span>
+                                </button>
+                                <div id="dropdownProjetosRefeicao" class="dropdown-content"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Coordenador</label>
+                            <div class="dropdown-filtro">
+                                <button type="button" class="dropdown-btn" onclick="toggleDropdown('dropdownCoordenadorRefeicao')">
+                                    <span id="textCoordenadorRefeicao">Selecionar coordenadores...</span>
+                                    <span class="dropdown-arrow">&#9660;</span>
+                                </button>
+                                <div id="dropdownCoordenadorRefeicao" class="dropdown-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="limparFiltros('refeicao')" class="mt-3 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                        Limpar todos os filtros
+                    </button>
+                </div>
+
+                <!-- KPIs Refeicao -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="kpisRefeicao"></div>
+
+                <!-- Indicador 1: Custo Medio Refeicao por Colaborador -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center text-xl">&#127860;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Custo Medio com Refeicao por Colaborador</h3>
+                            <p class="text-xs text-gray-500">Total refeicoes / Colaboradores | Media/Dia com dias reais do ponto (Secullum)</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div><canvas id="chartRefeicaoColab"></canvas></div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-orange-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Projeto</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Total Ref.</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Colabs</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Media/Dia</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Meta/Projeto</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Desvio</th>
+                                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-700 uppercase">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tabelaRefeicaoColab" class="divide-y divide-gray-200"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Indicador 2: Composicao por Tipo de Refeicao -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-teal-100 flex items-center justify-center text-xl">&#128202;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Composicao por Tipo de Refeicao</h3>
+                            <p class="text-xs text-gray-500">Proporcao de cada tipo e custo medio unitario</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="flex justify-center" style="max-height:300px;"><canvas id="chartComposicao"></canvas></div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-teal-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Tipo</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Qtd</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">% Qtd</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Valor Total</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">% Valor</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Custo Medio</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Meta Maxima</th>
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Desvio</th>
+                                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-700 uppercase">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tabelaComposicao" class="divide-y divide-gray-200"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Variacao Mensal de Refeicao -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-yellow-100 flex items-center justify-center text-xl">&#9888;&#65039;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Variacao Mensal de Custos - Refeicao</h3>
+                            <p class="text-xs text-gray-500">Selecione projetos para acompanhar a evolucao mes a mes</p>
+                        </div>
+                    </div>
+                    <div class="mb-4 no-print">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Projetos no grafico:</label>
+                        <div id="variacaoRefBtns" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div style="max-height:400px;"><canvas id="chartVariacaoRef"></canvas></div>
+                    <div class="mt-6 overflow-x-auto">
+                        <table class="w-full text-sm" id="tabelaVariacaoRefFull">
+                            <thead class="bg-yellow-50" id="theadVariacaoRef"></thead>
+                            <tbody id="tabelaVariacaoRef" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Indicador 3: Desvio de Quantidade - Refeicoes Duplicadas -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center text-xl">&#128270;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Desvio de Quantidade - Refeicoes Esperadas vs Realizadas</h3>
+                            <p class="text-xs text-gray-500">Colaboradores x Dias Reais (Secullum) = quantidade esperada por tipo/projeto | Diferenca indica possiveis duplicidades</p>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-red-50">
+                                <tr>
+                                    <th rowspan="2" class="px-4 py-2 text-left text-xs font-medium text-gray-700 uppercase border-r border-red-200">Projeto</th>
+                                    <th rowspan="2" class="px-4 py-2 text-center text-xs font-medium text-gray-700 uppercase border-r border-red-200">Colabs</th>
+                                    <th rowspan="2" class="px-4 py-2 text-center text-xs font-medium text-gray-700 uppercase border-r border-red-200">Dias Reais</th>
+                                    <th colspan="3" class="px-4 py-2 text-center text-xs font-bold text-green-700 uppercase border-r border-red-200 bg-green-50">Cafe</th>
+                                    <th colspan="3" class="px-4 py-2 text-center text-xs font-bold text-blue-700 uppercase border-r border-red-200 bg-blue-50">Almoco</th>
+                                    <th colspan="3" class="px-4 py-2 text-center text-xs font-bold text-yellow-700 uppercase border-r border-red-200 bg-yellow-50">Janta</th>
+                                    <th rowspan="2" class="px-4 py-2 text-center text-xs font-medium text-gray-700 uppercase border-r border-red-200">Desvio Total</th>
+                                    <th rowspan="2" class="px-4 py-2 text-center text-xs font-medium text-gray-700 uppercase">Status</th>
+                                </tr>
+                                <tr>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-green-50">Esperado</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-green-50">Real</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-green-50 border-r border-red-200">Desvio</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-blue-50">Esperado</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-blue-50">Real</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-blue-50 border-r border-red-200">Desvio</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-yellow-50">Esperado</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-yellow-50">Real</th>
+                                    <th class="px-3 py-1 text-center text-xs font-medium text-gray-600 bg-yellow-50 border-r border-red-200">Desvio</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaDesvioQtd" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Detalhamento por Fornecedor -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">Detalhamento por Fornecedor</h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-purple-50">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Projeto</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Cidade</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Fornecedor</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Cafe</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Alm. Marmitex</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Alm. Local</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Janta Marmitex</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Janta Local</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Gelo</th>
+                                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase font-bold">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaRefeicaoDetalhada" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================== -->
+        <!-- ABA IMOVEIS -->
+        <!-- ============================== -->
+        <div id="aba-imoveis" class="tab-content hidden">
+            <div class="space-y-6">
+                <div class="bg-white rounded-lg shadow-md p-6 no-print">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">Filtros</h3>
+                        <button onclick="exportarRelatorio('imoveis')" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                            Exportar Relatorio
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Mes</label>
+                            <div class="month-picker" id="monthPickerImoveis"></div>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Projetos</label>
+                            <div class="dropdown-filtro">
+                                <button type="button" class="dropdown-btn" onclick="toggleDropdown('dropdownProjetosImoveis')">
+                                    <span id="textProjetosImoveis">Selecionar projetos...</span>
+                                    <span class="dropdown-arrow">&#9660;</span>
+                                </button>
+                                <div id="dropdownProjetosImoveis" class="dropdown-content"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block font-semibold text-gray-700 mb-2">Coordenador</label>
+                            <div class="dropdown-filtro">
+                                <button type="button" class="dropdown-btn" onclick="toggleDropdown('dropdownCoordenadorImoveis')">
+                                    <span id="textCoordenadorImoveis">Selecionar coordenadores...</span>
+                                    <span class="dropdown-arrow">&#9660;</span>
+                                </button>
+                                <div id="dropdownCoordenadorImoveis" class="dropdown-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="limparFiltros('imoveis')" class="mt-3 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                        Limpar todos os filtros
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-green-50 rounded-lg shadow-sm p-4 border-l-4 border-green-500">
+                        <p class="text-sm text-gray-600 font-medium">Imoveis de Alojamento</p>
+                        <p class="text-xs text-gray-400">Aloj Comunitario + Aloj Gestao</p>
+                        <p class="text-2xl font-bold text-green-600 mt-1" id="totalAlojamento">R$ 0,00</p>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg shadow-sm p-4 border-l-4 border-purple-500">
+                        <p class="text-sm text-gray-600 font-medium">Imoveis de Apoio</p>
+                        <p class="text-xs text-gray-400">Escritorios, depositos, etc.</p>
+                        <p class="text-2xl font-bold text-purple-600 mt-1" id="totalApoio">R$ 0,00</p>
+                    </div>
+                    <div class="bg-blue-50 rounded-lg shadow-sm p-4 border-l-4 border-blue-500">
+                        <p class="text-sm text-gray-600 font-medium">Total Geral Imoveis</p>
+                        <p class="text-xs text-gray-400" id="qtdResumoImoveis">0 imoveis | 0 projetos</p>
+                        <p class="text-2xl font-bold text-blue-600 mt-1" id="totalFiltradoImoveis">R$ 0,00</p>
+                    </div>
+                </div>
+
+                <!-- RESUMIDO ALOJAMENTO: Só ALOJ COMUNITARIO + ALOJ GESTAO -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center text-xl">&#127968;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Resumo Alojamentos por Projeto</h3>
+                            <p class="text-xs text-gray-500">Somente Aloj Comunitario + Aloj Gestao | Alojados reais ou total de colaboradores do projeto</p>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-green-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Projeto</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Colabs Proj</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Alojados</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Capacidade</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Vagas Disp</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">% Ocup</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Qtd Aloj</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Aluguel</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Energia</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Agua</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Internet</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">IPTU</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Manutencao</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Total</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Custo/Pessoa</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaImoAlojamento" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-3">* Alojados: valor real da planilha. Quando nao informado, usa o total de colaboradores do projeto.</p>
+                </div>
+
+                <!-- RESUMIDO APOIO: Só IMOVEL APOIO -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center text-xl">&#127968;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Resumo Imoveis de Apoio por Projeto</h3>
+                            <p class="text-xs text-gray-500">Somente Imovel Apoio (escritorios, depositos, etc.) | Total de colaboradores do projeto</p>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-purple-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Projeto</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Colabs Proj</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Qtd Imoveis</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Aluguel</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Energia</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Agua</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Internet</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">IPTU</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Manutencao</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Total</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Custo/Colab</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaImoApoio" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-3">Custo/Colab = Total Apoio / Total de colaboradores do projeto.</p>
+                </div>
+
+                <!-- DETALHADO: Por Endereco -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center text-xl">&#128203;</div>
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-800">Detalhado por Endereco</h3>
+                            <p class="text-xs text-gray-500">Cada imovel com custos individuais | Alojados reais ou total de colaboradores do projeto</p>
+                        </div>
+                    </div>
+                    <div class="mb-4 no-print">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Filtrar por tipo:</label>
+                        <div id="filtroTipoImoBtns" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-green-50">
+                                <tr>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Projeto</th>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Tipo</th>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Endereco</th>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Destinacao</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Alojados</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Capacidade</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Vagas Disp</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">% Ocup</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Aluguel</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Energia</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Agua</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Internet</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">IPTU</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Manutencao</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabelaImoDetalhado" class="divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ============================
+        // DADOS GLOBAIS
+        // ============================
+        let dadosImoveis = [];
+        let dadosRefeicao = [];
+        let dadosColaboradores = [];
+        let dadosDiasTrabalhados = [];
+        let alojadosAprox = {}; // { projeto: qtd } - cargos operacionais como aproximação
+
+        let filtros = { projetos: [], coordenadores: [], meses: [] };
+        let charts = {};
+
+        // Metas de refeicao por regiao (Meta Maxima por tipo de refeicao)
+        const METAS_REGIAO = {
+            'TELEMACO_BORBA': {
+                projetos: [202, 206, 207, 209],
+                metas: { 'CAF\u00C9': 11.00, 'ALMO\u00C7O LOCAL': 26.00, 'ALMO\u00C7O MARMITEX': 21.00, 'JANTA LOCAL': 26.00, 'JANTA MARMITEX': 21.00 }
+            },
+            'PONTA_GROSSA': {
+                projetos: [706],
+                metas: { 'CAF\u00C9': 11.00, 'ALMO\u00C7O LOCAL': 26.00, 'ALMO\u00C7O MARMITEX': 21.00, 'JANTA LOCAL': 26.00, 'JANTA MARMITEX': 21.00 }
+            },
+            'ANAPOLIS': {
+                projetos: [700, 702, 704, 705],
+                metas: { 'CAF\u00C9': 10.00, 'ALMO\u00C7O LOCAL': 25.00, 'ALMO\u00C7O MARMITEX': 22.00, 'JANTA LOCAL': 25.00, 'JANTA MARMITEX': 21.00 }
+            },
+            'CAMPO_GRANDE': {
+                projetos: [600, 708, 801, 820, 830],
+                metas: { 'CAF\u00C9': 10.50, 'ALMO\u00C7O LOCAL': 27.00, 'ALMO\u00C7O MARMITEX': 22.00, 'JANTA LOCAL': 27.00, 'JANTA MARMITEX': 22.00 }
+            }
+        };
+
+        // Meta diaria por projeto = cafe + almoco marmitex + janta marmitex
+        function getMetaProjeto(projeto) {
+            for (const regiao of Object.values(METAS_REGIAO)) {
+                if (regiao.projetos.includes(projeto)) {
+                    const m = regiao.metas;
+                    return (m['CAF\u00C9'] || 0) + (m['ALMO\u00C7O MARMITEX'] || 0) + (m['JANTA MARMITEX'] || 0);
+                }
+            }
+            return null;
+        }
+
+        // Meta por tipo de refeicao para um projeto especifico
+        function getMetaTipoProjeto(projeto, tipoRefeicao) {
+            for (const regiao of Object.values(METAS_REGIAO)) {
+                if (regiao.projetos.includes(projeto)) {
+                    return regiao.metas[tipoRefeicao] !== undefined ? regiao.metas[tipoRefeicao] : null;
+                }
+            }
+            return null;
+        }
+
+        // Meta ponderada por tipo (media das metas pesada pela qtd de cada regiao)
+        function getMetaPonderadaTipo(tipoRefeicao, dadosFilt) {
+            let totalQtd = 0, soma = 0;
+            dadosFilt.filter(d => d.TIPO_REFEICAO === tipoRefeicao).forEach(d => {
+                const q = d.QUANTIDADE || 0;
+                const meta = getMetaTipoProjeto(d.PROJETO, tipoRefeicao);
+                if (meta !== null && q > 0) { soma += meta * q; totalQtd += q; }
+            });
+            return totalQtd > 0 ? soma / totalQtd : null;
+        }
+
+        // ============================
+        // UTILIDADES
+        // ============================
+        const ORDEM_MESES = {
+            'JANEIRO': 1, 'FEVEREIRO': 2, 'MARCO': 3, 'ABRIL': 4,
+            'MAIO': 5, 'JUNHO': 6, 'JULHO': 7, 'AGOSTO': 8,
+            'SETEMBRO': 9, 'OUTUBRO': 10, 'NOVEMBRO': 11, 'DEZEMBRO': 12,
+            'MAR\u00C7O': 3
+        };
+
+        function ordenarMeses(meses) {
+            return meses.sort((a, b) => {
+                const [mesA, anoA] = a.split('/');
+                const [mesB, anoB] = b.split('/');
+                const numAnoA = parseInt(anoA) || 0;
+                const numAnoB = parseInt(anoB) || 0;
+                if (numAnoA !== numAnoB) return numAnoA - numAnoB;
+                return (ORDEM_MESES[mesA] || 0) - (ORDEM_MESES[mesB] || 0);
+            });
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+        }
+
+        function calcularTotal(dados, campo) {
+            return dados.reduce((acc, item) => acc + (item[campo] || 0), 0);
+        }
+
+        function agruparPor(dados, campo) {
+            const grupos = {};
+            dados.forEach(item => {
+                const chave = item[campo];
+                if (!grupos[chave]) grupos[chave] = [];
+                grupos[chave].push(item);
+            });
+            return grupos;
+        }
+
+        // ============================
+        // MONTH PICKER
+        // ============================
+        const MESES_CURTOS = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+        const MESES_NOMES = ['JANEIRO', 'FEVEREIRO', 'MAR\u00C7O', 'ABRIL', 'MAIO', 'JUNHO', 'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
+        const monthPickers = {};
+
+        function criarMonthPicker(containerId, aba) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            if (monthPickers[containerId]) { mpRenderGrid(containerId, aba); return; }
+
+            const currentYear = new Date().getFullYear();
+            const state = { year: currentYear, open: false };
+            monthPickers[containerId] = state;
+
+            container.innerHTML = `
+                <button type="button" class="month-picker-btn" data-picker="${containerId}">
+                    <span class="mp-text">Selecionar mes...</span>
+                    <span class="dropdown-arrow">&#9660;</span>
+                </button>
+                <div class="month-picker-panel" id="${containerId}_panel">
+                    <div class="month-picker-header">
+                        <button type="button" onclick="mpChangeYear('${containerId}', -1, '${aba}')">&#9664;</button>
+                        <span class="month-picker-year" id="${containerId}_year">${currentYear}</span>
+                        <button type="button" onclick="mpChangeYear('${containerId}', 1, '${aba}')">&#9654;</button>
+                    </div>
+                    <div class="month-picker-grid" id="${containerId}_grid"></div>
+                    <div class="month-picker-actions">
+                        <button type="button" class="mp-btn-clear" onclick="mpLimpar('${containerId}', '${aba}')">Limpar</button>
+                    </div>
+                </div>
+            `;
+            container.querySelector('.month-picker-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                const panel = document.getElementById(`${containerId}_panel`);
+                document.querySelectorAll('.month-picker-panel').forEach(p => { if (p.id !== `${containerId}_panel`) p.classList.remove('show'); });
+                document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
+                panel.classList.toggle('show');
+            });
+            mpRenderGrid(containerId, aba);
+        }
+
+        function mpRenderGrid(containerId, aba) {
+            const state = monthPickers[containerId];
+            const grid = document.getElementById(`${containerId}_grid`);
+            const yearEl = document.getElementById(`${containerId}_year`);
+            if (!grid || !yearEl) return;
+            yearEl.textContent = state.year;
+            const anoStr = String(state.year).slice(-2);
+            grid.innerHTML = MESES_CURTOS.map((mes, i) => {
+                const valor = `${MESES_NOMES[i]}/${anoStr}`;
+                const selected = filtros.meses.includes(valor) ? 'selected' : '';
+                return `<div class="month-picker-cell ${selected}" data-valor="${valor}" onclick="mpToggleMes('${containerId}', '${valor}', '${aba}')">${mes}</div>`;
+            }).join('');
+            mpAtualizarTexto(containerId);
+        }
+
+        function mpToggleMes(containerId, valor, aba) {
+            if (filtros.meses.length === 1 && filtros.meses[0] === valor) {
+                filtros.meses = [];
+            } else {
+                filtros.meses = [valor];
+            }
+            Object.keys(monthPickers).forEach(id => mpRenderGrid(id, aba));
+            atualizarAba(aba);
+        }
+
+        function mpChangeYear(containerId, delta, aba) {
+            monthPickers[containerId].year += delta;
+            mpRenderGrid(containerId, aba);
+        }
+
+        function mpLimpar(containerId, aba) {
+            filtros.meses = [];
+            Object.keys(monthPickers).forEach(id => mpRenderGrid(id, aba));
+            atualizarAba(aba);
+        }
+
+        function mpAtualizarTexto(containerId) {
+            const btn = document.querySelector(`#${containerId} .mp-text`);
+            if (!btn) return;
+            if (filtros.meses.length === 0) {
+                btn.textContent = 'Selecionar mes...';
+                btn.classList.remove('text-blue-600', 'font-semibold');
+            } else {
+                const [nome, ano] = filtros.meses[0].split('/');
+                btn.textContent = `${MESES_CURTOS[MESES_NOMES.indexOf(nome)]}/${ano}`;
+                btn.classList.add('text-blue-600', 'font-semibold');
+            }
+        }
+
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.month-picker')) {
+                document.querySelectorAll('.month-picker-panel').forEach(p => p.classList.remove('show'));
+            }
+        });
+
+        // ============================
+        // DROPDOWN CHECKBOXES
+        // ============================
+        function toggleDropdown(dropdownId) {
+            const dropdown = document.getElementById(dropdownId);
+            dropdown.classList.toggle('show');
+            document.querySelectorAll('.dropdown-content').forEach(d => { if (d.id !== dropdownId) d.classList.remove('show'); });
+        }
+
+        document.addEventListener('click', function(event) {
+            if (!event.target.matches('.dropdown-btn') && !event.target.closest('.dropdown-btn')) {
+                document.querySelectorAll('.dropdown-content').forEach(d => d.classList.remove('show'));
+            }
+        });
+
+        function criarDropdownCheckboxes(containerId, opcoes, textId, tipo, aba) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = opcoes.map(opcao => {
+                const valor = typeof opcao === 'object' ? opcao.value : opcao;
+                const texto = typeof opcao === 'object' ? opcao.label : opcao;
+                const checked = filtros[tipo].includes(valor) ? 'checked' : '';
+                return `<div class="dropdown-item" onclick="event.stopPropagation()">
+                    <input type="checkbox" id="${containerId}_${valor}" value="${valor}" ${checked}
+                           onchange="atualizarFiltroCheckbox('${tipo}', '${valor}', this.checked, '${textId}', '${aba}')">
+                    <label for="${containerId}_${valor}" class="cursor-pointer">${texto}</label>
+                </div>`;
+            }).join('');
+            atualizarTextoDropdown(textId, tipo);
+        }
+
+        function atualizarFiltroCheckbox(tipo, valor, checked, textId, aba) {
+            const valorConvertido = tipo === 'projetos' ? Number(valor) : valor;
+            if (checked) {
+                if (!filtros[tipo].includes(valorConvertido)) filtros[tipo].push(valorConvertido);
+            } else {
+                filtros[tipo] = filtros[tipo].filter(v => v !== valorConvertido);
+            }
+            atualizarTextoDropdown(textId, tipo);
+            atualizarAba(aba);
+        }
+
+        function atualizarTextoDropdown(textId, tipo) {
+            const textElement = document.getElementById(textId);
+            const count = filtros[tipo].length;
+            if (count === 0) {
+                textElement.textContent = textId.includes('Projetos') ? 'Selecionar projetos...' :
+                    textId.includes('Coordenador') ? 'Selecionar coordenadores...' : 'Selecionar tipos...';
+            } else {
+                textElement.textContent = `${count} selecionado${count > 1 ? 's' : ''}`;
+            }
+        }
+
+        function obterDadosFiltrados(dados, tipo) {
+            return dados.filter(item => {
+                const filtroProjeto = filtros.projetos.length === 0 || filtros.projetos.includes(item.PROJETO);
+                const filtroCoordenador = filtros.coordenadores.length === 0 || filtros.coordenadores.includes(item.COORDENADOR);
+                const filtroMes = filtros.meses.length === 0 || filtros.meses.includes(item.MES);
+                return filtroProjeto && filtroCoordenador && filtroMes;
+            });
+        }
+
+        // ============================
+        // NAVEGACAO
+        // ============================
+        function trocarAba(aba) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('tab-active');
+                el.classList.add('text-gray-600', 'hover:text-gray-800');
+            });
+            document.getElementById(`aba-${aba}`).classList.remove('hidden');
+            const btn = document.querySelector(`[data-tab="${aba}"]`);
+            btn.classList.add('tab-active');
+            btn.classList.remove('text-gray-600', 'hover:text-gray-800');
+            atualizarAba(aba);
+        }
+
+        function atualizarAba(aba) {
+            atualizarResumoGeral();
+            if (aba === 'refeicao') renderizarRefeicao();
+            else if (aba === 'imoveis') renderizarImoveis();
+        }
+
+        function limparFiltros(aba) {
+            filtros.projetos = [];
+            filtros.coordenadores = [];
+            filtros.meses = [];
+            // filtros limpos
+            Object.keys(monthPickers).forEach(id => mpRenderGrid(id, aba));
+            atualizarAba(aba);
+        }
+
+        function totalImovel(d) {
+            return (d.ALUGUEL || 0) + (d.ENERGIA || 0) + (d.AGUA || 0) + (d.INTERNET || 0) + (d.IPTU || 0) + (d.MANUTENCAO || 0);
+        }
+
+        function atualizarResumoGeral() {
+            const dadosImoveisFiltrados = obterDadosFiltrados(dadosImoveis, 'imoveis');
+            const dadosRefeicaoFiltrados = obterDadosFiltrados(dadosRefeicao, 'refeicao');
+            const totalImo = dadosImoveisFiltrados.reduce((acc, d) => acc + totalImovel(d), 0);
+            const totalRef = calcularTotal(dadosRefeicaoFiltrados, 'VALOR');
+            document.getElementById('totalImoveis').textContent = formatCurrency(totalImo);
+            document.getElementById('totalRefeicao').textContent = formatCurrency(totalRef);
+            document.getElementById('totalGeral').textContent = formatCurrency(totalImo + totalRef);
+            document.getElementById('qtdImoveis').textContent = `${dadosImoveisFiltrados.length} imoveis`;
+            document.getElementById('qtdRefeicao').textContent = `${new Set(dadosRefeicaoFiltrados.map(d => d.PROJETO + '|' + d.FORNECEDOR)).size} fornecedores`;
+        }
+
+        // ============================
+        // EXPORTAR RELATORIO
+        // ============================
+        function exportarRelatorio(tipo) {
+            const mesStr = filtros.meses.length > 0 ? filtros.meses[0] : 'Todos os meses';
+            const projStr = filtros.projetos.length > 0 ? `Projetos: ${filtros.projetos.join(', ')}` : 'Todos os projetos';
+            const coordStr = filtros.coordenadores.length > 0 ? `Coordenadores: ${filtros.coordenadores.join(', ')}` : 'Todos os coordenadores';
+
+            const subtitleEl = document.getElementById('printSubtitle');
+            const infoEl = document.getElementById('printInfo');
+            if (subtitleEl) subtitleEl.textContent = `Relatorio de ${tipo === 'refeicao' ? 'Refeicoes' : 'Imoveis'} - ${mesStr}`;
+            if (infoEl) infoEl.textContent = `${projStr} | ${coordStr} | Gerado em ${new Date().toLocaleDateString('pt-BR')} as ${new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+
+            // Marcar aba ativa para impressao
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('print-active'));
+            document.getElementById(`aba-${tipo === 'refeicao' ? 'refeicao' : 'imoveis'}`).classList.add('print-active');
+
+            window.print();
+
+            // Limpar classe apos impressao
+            setTimeout(() => {
+                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('print-active'));
+            }, 1000);
+        }
+
+        // ============================
+        // HELPERS DE COLABORADORES
+        // ============================
+        function getColabFiltrados() {
+            let colabBase = [...dadosColaboradores];
+            if (filtros.meses.length > 0) {
+                colabBase = colabBase.filter(c => filtros.meses.includes(c.DATA));
+            } else {
+                const mesesDisp = ordenarMeses([...new Set(colabBase.map(c => c.DATA))]);
+                const mesRecente = mesesDisp.length > 0 ? mesesDisp[mesesDisp.length - 1] : null;
+                colabBase = mesRecente ? colabBase.filter(c => c.DATA === mesRecente) : [];
+            }
+            if (filtros.coordenadores.length > 0) colabBase = colabBase.filter(c => c.COORDENADOR && filtros.coordenadores.includes(c.COORDENADOR));
+            if (filtros.projetos.length > 0) colabBase = colabBase.filter(c => filtros.projetos.includes(c.PROJETO));
+            return colabBase;
+        }
+
+        function getColabProjeto(projeto, colabFiltrados) {
+            const colabProj = colabFiltrados.filter(c => c.PROJETO === projeto);
+            if (colabProj.length > 0) {
+                return Math.round(colabProj.reduce((acc, c) => acc + c.QUANTIDADE, 0) / colabProj.length);
+            }
+            const mesesProj = ordenarMeses([...new Set(dadosColaboradores.filter(c => c.PROJETO === projeto).map(c => c.DATA))]);
+            const mesProjRecente = mesesProj.length > 0 ? mesesProj[mesesProj.length - 1] : null;
+            const colab = mesProjRecente ? dadosColaboradores.find(c => c.PROJETO === projeto && c.DATA === mesProjRecente) : null;
+            return colab ? colab.QUANTIDADE : 0;
+        }
+
+        function getDiasReaisProjeto(projeto) {
+            const mesesFiltro = filtros.meses.length > 0 ? filtros.meses : null;
+            const registros = dadosDiasTrabalhados.filter(d => {
+                if (d.PROJETO !== projeto) return false;
+                if (mesesFiltro && !mesesFiltro.includes(d.MES)) return false;
+                return true;
+            });
+            if (registros.length === 0) return null;
+            const totalDias = registros.reduce((acc, d) => acc + d.DIAS_REAIS, 0);
+            const totalFuncs = registros.reduce((acc, d) => acc + d.FUNCIONARIOS, 0);
+            const mediaDiasPorFunc = totalFuncs > 0 ? Math.round(totalDias / totalFuncs) : null;
+            return { totalDias, totalFuncs, mediaDiasPorFunc };
+        }
+
+        // ============================
+        // RENDERIZAR REFEICAO (COMPLETO)
+        // ============================
+        function renderizarRefeicao() {
+            // --- SETUP DROPDOWNS ---
+            const todosProjetos = [...new Set(dadosRefeicao.map(d => d.PROJETO))].sort((a, b) => a - b);
+            const todosCoordenadores = [...new Set(dadosRefeicao.map(d => d.COORDENADOR))].sort();
+
+            criarMonthPicker('monthPickerRefeicao', 'refeicao');
+            criarDropdownCheckboxes('dropdownProjetosRefeicao', todosProjetos.map(p => ({value: p, label: `Projeto ${p}`})), 'textProjetosRefeicao', 'projetos', 'refeicao');
+            criarDropdownCheckboxes('dropdownCoordenadorRefeicao', todosCoordenadores, 'textCoordenadorRefeicao', 'coordenadores', 'refeicao');
+
+            // --- DADOS FILTRADOS ---
+            const dadosFiltrados = obterDadosFiltrados(dadosRefeicao, 'refeicao');
+            const totalFiltrado = calcularTotal(dadosFiltrados, 'VALOR');
+
+            // --- COLABORADORES ---
+            const colabFiltrados = getColabFiltrados();
+            const totalColaboradores = colabFiltrados.reduce((acc, c) => acc + c.QUANTIDADE, 0);
+            const mesRefColab = filtros.meses.length > 0 ? filtros.meses[0] : (() => {
+                const m = ordenarMeses([...new Set(dadosColaboradores.map(c => c.DATA))]);
+                return m.length > 0 ? m[m.length - 1] : 'N/A';
+            })();
+
+            const custoMensalPorColab = totalColaboradores > 0 ? totalFiltrado / totalColaboradores : 0;
+            const qtdFornecedores = new Set(dadosFiltrados.map(d => `${d.PROJETO}|${d.FORNECEDOR}`)).size;
+            const qtdProjetos = new Set(dadosFiltrados.map(d => d.PROJETO)).size;
+
+            // === KPI CARDS ===
+            document.getElementById('kpisRefeicao').innerHTML = `
+                <div class="bg-white rounded-lg shadow-md p-5 border-t-4 border-purple-500">
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Total Refeicao</p>
+                    <p class="text-2xl font-bold text-gray-800 mt-1">${formatCurrency(totalFiltrado)}</p>
+                    <p class="text-xs text-gray-400 mt-1">${qtdProjetos} projetos</p>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-5 border-t-4 border-green-500">
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Colaboradores</p>
+                    <p class="text-2xl font-bold text-gray-800 mt-1">${totalColaboradores}</p>
+                    <p class="text-xs text-gray-400 mt-1">Ref: ${mesRefColab}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-5 border-t-4 border-orange-500">
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Custo/Colab (Mensal)</p>
+                    <p class="text-2xl font-bold text-gray-800 mt-1">${totalColaboradores > 0 ? formatCurrency(custoMensalPorColab) : 'N/A'}</p>
+                    <p class="text-xs text-gray-400 mt-1">Refeicao apenas</p>
+                </div>
+                <div class="bg-white rounded-lg shadow-md p-5 border-t-4 border-blue-500">
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Fornecedores</p>
+                    <p class="text-2xl font-bold text-gray-800 mt-1">${qtdFornecedores}</p>
+                    <p class="text-xs text-gray-400 mt-1">${qtdProjetos} projetos</p>
+                </div>
+            `;
+
+            // === INDICADOR 1: CUSTO POR COLABORADOR ===
+            const projetosFiltrados = [...new Set(dadosFiltrados.map(d => d.PROJETO))].sort((a, b) => a - b);
+            const dadosRefColab = projetosFiltrados.map(p => {
+                const totalRef = calcularTotal(dadosFiltrados.filter(d => d.PROJETO === p), 'VALOR');
+                const colab = getColabProjeto(p, colabFiltrados);
+                const custoPorColab = colab > 0 ? totalRef / colab : 0;
+                const diasInfo = getDiasReaisProjeto(p);
+                const diasPorFunc = diasInfo ? diasInfo.mediaDiasPorFunc : null;
+                const mediaDia = (colab > 0 && diasPorFunc) ? custoPorColab / diasPorFunc : null;
+                const metaProj = getMetaProjeto(p);
+                return { projeto: p, totalRef, colab, custoPorColab, diasPorFunc, mediaDia, metaProj };
+            }).filter(d => d.totalRef > 0).sort((a, b) => (b.mediaDia || 0) - (a.mediaDia || 0));
+
+            // Chart
+            if (charts.refColab) charts.refColab.destroy();
+            charts.refColab = new Chart(document.getElementById('chartRefeicaoColab'), {
+                type: 'bar',
+                data: {
+                    labels: dadosRefColab.map(d => `${d.projeto}`),
+                    datasets: [{
+                        label: 'Media/Dia (Refeicao)',
+                        data: dadosRefColab.map(d => d.mediaDia),
+                        backgroundColor: dadosRefColab.map(d => {
+                            if (!d.mediaDia || !d.metaProj) return 'rgba(249,115,22,0.7)';
+                            return d.mediaDia > d.metaProj ? 'rgba(239,68,68,0.7)' : 'rgba(34,197,94,0.7)';
+                        }),
+                        borderColor: dadosRefColab.map(d => {
+                            if (!d.mediaDia || !d.metaProj) return 'rgb(249,115,22)';
+                            return d.mediaDia > d.metaProj ? 'rgb(239,68,68)' : 'rgb(34,197,94)';
+                        }),
+                        borderWidth: 1
+                    }]
+                },
+                plugins: [ChartDataLabels],
+                options: {
+                    responsive: true,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        datalabels: { color: '#fff', font: { weight: 'bold', size: 11 }, anchor: 'center', align: 'center', formatter: v => v ? 'R$ ' + v.toLocaleString('pt-BR', {minimumFractionDigits:2}) : 'N/A' }
+                    },
+                    scales: { x: { beginAtZero: true, grid: { display: false }, ticks: { callback: v => 'R$ ' + v.toLocaleString('pt-BR') } }, y: { grid: { display: false } } }
+                }
+            });
+
+            // Tabela com Meta/Projeto e Desvio
+            const fmtDesvio = (val) => {
+                if (val === null) return '<span class="text-gray-400">-</span>';
+                const cls = val > 0 ? 'text-red-600' : 'text-green-600';
+                return `<span class="font-bold ${cls}">${val >= 0 ? '+' : ''}${formatCurrency(val)}</span>`;
+            };
+
+            document.getElementById('tabelaRefeicaoColab').innerHTML = dadosRefColab.map(d => {
+                const desvio = (d.mediaDia !== null && d.metaProj !== null) ? d.mediaDia - d.metaProj : null;
+                const foraMeta = desvio !== null && desvio > 0;
+                const diasLabel = d.diasPorFunc ? d.diasPorFunc : '?';
+
+                let statusHTML;
+                if (desvio === null) {
+                    statusHTML = '<span class="text-gray-400 text-xs">A definir</span>';
+                } else if (foraMeta) {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Acima</span>';
+                } else {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">OK</span>';
+                }
+
+                return `<tr class="hover:bg-orange-50${foraMeta ? ' bg-red-50' : ''}">
+                    <td class="px-3 py-2 font-bold text-gray-900">${d.projeto}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${formatCurrency(d.totalRef)}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.colab || '<span class="text-gray-400">N/A</span>'}</td>
+                    <td class="px-3 py-2 text-right text-gray-600">${d.mediaDia !== null ? formatCurrency(d.mediaDia) : '<span class="text-gray-400">N/A</span>'} <span class="text-xs text-gray-400">(${diasLabel}d)</span></td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.metaProj !== null ? formatCurrency(d.metaProj) : '<span class="text-gray-400 text-xs">A definir</span>'}</td>
+                    <td class="px-3 py-2 text-right">${fmtDesvio(desvio)}</td>
+                    <td class="px-3 py-2 text-center">${statusHTML}</td>
+                </tr>`;
+            }).join('');
+
+            // === INDICADOR 2: COMPOSICAO POR TIPO ===
+            const composicao = {};
+            dadosFiltrados.forEach(d => {
+                const tipo = d.TIPO_REFEICAO || 'OUTROS';
+                if (!composicao[tipo]) composicao[tipo] = { qtd: 0, total: 0 };
+                composicao[tipo].qtd += (d.QUANTIDADE || 0);
+                composicao[tipo].total += (d.VALOR || 0);
+            });
+            const tiposComp = Object.keys(composicao).sort();
+            const totalQtdComp = tiposComp.reduce((a, t) => a + composicao[t].qtd, 0);
+            const totalValComp = tiposComp.reduce((a, t) => a + composicao[t].total, 0);
+
+            const coresComposicao = ['#10b981', '#3b82f6', '#60a5fa', '#f59e0b', '#fb923c', '#06b6d4', '#8b5cf6', '#ec4899'];
+
+            if (charts.composicao) charts.composicao.destroy();
+            charts.composicao = new Chart(document.getElementById('chartComposicao'), {
+                type: 'doughnut',
+                data: {
+                    labels: tiposComp,
+                    datasets: [{
+                        data: tiposComp.map(t => composicao[t].total),
+                        backgroundColor: tiposComp.map((_, i) => coresComposicao[i % coresComposicao.length] + 'cc'),
+                        borderColor: tiposComp.map((_, i) => coresComposicao[i % coresComposicao.length]),
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: '55%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(ctx) {
+                                    const perc = totalValComp > 0 ? ((ctx.raw / totalValComp) * 100).toFixed(1) : 0;
+                                    return ctx.label + ': ' + formatCurrency(ctx.raw) + ' (' + perc + '%)';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Ordenar composicao por desvio (maior desvio primeiro)
+            const tiposCompComMeta = tiposComp.map((tipo, i) => {
+                const d = composicao[tipo];
+                const custoMedio = d.qtd > 0 ? d.total / d.qtd : 0;
+                const meta = getMetaPonderadaTipo(tipo, dadosFiltrados);
+                const desvio = (meta !== null && custoMedio > 0) ? custoMedio - meta : null;
+                return { tipo, d, custoMedio, meta, desvio, corIdx: i };
+            }).sort((a, b) => {
+                if (a.desvio === null && b.desvio === null) return 0;
+                if (a.desvio === null) return 1;
+                if (b.desvio === null) return -1;
+                return b.desvio - a.desvio;
+            });
+
+            document.getElementById('tabelaComposicao').innerHTML = tiposCompComMeta.map(item => {
+                const { tipo, d, custoMedio, meta, desvio, corIdx } = item;
+                const percQtd = totalQtdComp > 0 ? ((d.qtd / totalQtdComp) * 100).toFixed(1) : 0;
+                const percVal = totalValComp > 0 ? ((d.total / totalValComp) * 100).toFixed(1) : 0;
+                const cor = coresComposicao[corIdx % coresComposicao.length];
+                const foraMeta = desvio !== null && desvio > 0;
+
+                let metaHTML = meta !== null ? formatCurrency(meta) : '<span class="text-gray-400">-</span>';
+                let desvioHTML;
+                if (desvio === null) {
+                    desvioHTML = '<span class="text-gray-400">-</span>';
+                } else {
+                    const cls = desvio > 0 ? 'text-red-600' : 'text-green-600';
+                    desvioHTML = `<span class="font-bold ${cls}">${desvio >= 0 ? '+' : ''}${formatCurrency(desvio)}</span>`;
+                }
+                let statusHTML;
+                if (desvio === null) {
+                    statusHTML = '<span class="text-gray-400">-</span>';
+                } else if (foraMeta) {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Acima</span>';
+                } else {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">OK</span>';
+                }
+
+                return `<tr class="hover:bg-teal-50${foraMeta ? ' bg-red-50' : ''}">
+                    <td class="px-3 py-2 font-semibold text-gray-900"><span class="inline-block w-3 h-3 rounded-full mr-2" style="background:${cor}"></span>${tipo}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.qtd.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-right text-gray-500">${percQtd}%</td>
+                    <td class="px-3 py-2 text-right font-semibold text-gray-800">${formatCurrency(d.total)}</td>
+                    <td class="px-3 py-2 text-right text-gray-500">${percVal}%</td>
+                    <td class="px-3 py-2 text-right font-bold text-teal-600">${formatCurrency(custoMedio)}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${metaHTML}</td>
+                    <td class="px-3 py-2 text-right">${desvioHTML}</td>
+                    <td class="px-3 py-2 text-center">${statusHTML}</td>
+                </tr>`;
+            }).join('') + `<tr class="bg-teal-100 font-bold">
+                <td class="px-3 py-2 text-gray-900">TOTAL</td>
+                <td class="px-3 py-2 text-right text-gray-800">${totalQtdComp.toLocaleString('pt-BR')}</td>
+                <td class="px-3 py-2 text-right">100%</td>
+                <td class="px-3 py-2 text-right text-gray-800">${formatCurrency(totalValComp)}</td>
+                <td class="px-3 py-2 text-right">100%</td>
+                <td class="px-3 py-2 text-right text-teal-700">${totalQtdComp > 0 ? formatCurrency(totalValComp / totalQtdComp) : '-'}</td>
+                <td class="px-3 py-2" colspan="3"></td>
+            </tr>`;
+
+            // === VARIACAO MENSAL DE REFEICAO ===
+            const dadosRefSemFiltroMes = dadosRefeicao.filter(d => {
+                const fp = filtros.projetos.length === 0 || filtros.projetos.includes(d.PROJETO);
+                const fc = filtros.coordenadores.length === 0 || filtros.coordenadores.includes(d.COORDENADOR);
+                return fp && fc;
+            });
+            const mesesOrdenados = ordenarMeses([...new Set(dadosRefSemFiltroMes.map(d => d.MES))]);
+            const projetosVariacao = [...new Set(dadosRefSemFiltroMes.map(d => d.PROJETO))].sort((a, b) => a - b);
+
+            document.getElementById('theadVariacaoRef').innerHTML = `<tr>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase sticky left-0 bg-yellow-50">Projeto</th>
+                ${mesesOrdenados.map(m => `<th class="px-3 py-2 text-right text-xs font-medium text-gray-700 uppercase whitespace-nowrap">${m}</th>`).join('')}
+            </tr>`;
+
+            const variacaoProjetos = projetosVariacao.map(p => {
+                const totaisMes = {};
+                mesesOrdenados.forEach(m => {
+                    totaisMes[m] = calcularTotal(dadosRefSemFiltroMes.filter(d => d.PROJETO === p && d.MES === m), 'VALOR');
+                });
+                return Object.values(totaisMes).some(v => v > 0) ? { projeto: p, totaisMes } : null;
+            }).filter(d => d !== null);
+
+            const coresGrafico = ['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1','#14b8a6','#e11d48','#a855f7','#0ea5e9','#d946ef'];
+
+            if (!window._varRefSelecionados) {
+                window._varRefSelecionados = variacaoProjetos.length > 0 ? [variacaoProjetos[0].projeto] : [];
+            }
+            window._varRefSelecionados = window._varRefSelecionados.filter(p => variacaoProjetos.some(v => v.projeto === p));
+            if (window._varRefSelecionados.length === 0 && variacaoProjetos.length > 0) {
+                window._varRefSelecionados = [variacaoProjetos[0].projeto];
+            }
+
+            function renderizarGraficoVariacaoRef() {
+                const selecionados = window._varRefSelecionados;
+                const datasets = variacaoProjetos
+                    .filter(d => selecionados.includes(d.projeto))
+                    .map((d) => {
+                        const cor = coresGrafico[selecionados.indexOf(d.projeto) % coresGrafico.length];
+                        return {
+                            label: `${d.projeto}`,
+                            data: mesesOrdenados.map(m => d.totaisMes[m] || 0),
+                            borderColor: cor,
+                            backgroundColor: cor + '22',
+                            borderWidth: 2.5,
+                            pointRadius: 4,
+                            pointBackgroundColor: cor,
+                            tension: 0.3,
+                            fill: false
+                        };
+                    });
+
+                if (charts.variacaoRef) charts.variacaoRef.destroy();
+                charts.variacaoRef = new Chart(document.getElementById('chartVariacaoRef'), {
+                    type: 'line',
+                    data: {
+                        labels: mesesOrdenados.map(m => m.split('/')[0].substring(0, 3) + '/' + m.split('/')[1]),
+                        datasets: datasets
+                    },
+                    plugins: [ChartDataLabels],
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: selecionados.length > 1, position: 'top', labels: { usePointStyle: true, padding: 15 } },
+                            datalabels: {
+                                display: ctx => ctx.dataset.data[ctx.dataIndex] > 0,
+                                color: ctx => ctx.dataset.borderColor,
+                                font: { weight: 'bold', size: 10 },
+                                anchor: 'end', align: 'top', offset: 2,
+                                formatter: v => v > 0 ? 'R$ ' + (v / 1000).toFixed(1) + 'k' : ''
+                            }
+                        },
+                        scales: {
+                            x: { grid: { display: false } },
+                            y: { beginAtZero: true, grid: { display: false }, ticks: { callback: v => 'R$ ' + (v / 1000).toFixed(0) + 'k' } }
+                        }
+                    }
+                });
+            }
+
+            // Botoes de selecao de projeto
+            const btnsContainer = document.getElementById('variacaoRefBtns');
+            btnsContainer.innerHTML = variacaoProjetos.map((d, i) => {
+                const cor = coresGrafico[i % coresGrafico.length];
+                const ativo = window._varRefSelecionados.includes(d.projeto);
+                return `<button onclick="toggleProjetoVarRef(${d.projeto})"
+                    class="px-3 py-1.5 rounded-full text-xs font-bold transition-all border-2"
+                    id="btnVarRef_${d.projeto}"
+                    style="border-color:${cor}; ${ativo ? `background-color:${cor}; color:white;` : `background-color:white; color:${cor};`}">
+                    ${d.projeto}
+                </button>`;
+            }).join('');
+
+            window.toggleProjetoVarRef = function(projeto) {
+                const idx = window._varRefSelecionados.indexOf(projeto);
+                if (idx >= 0) {
+                    if (window._varRefSelecionados.length > 1) window._varRefSelecionados.splice(idx, 1);
+                } else {
+                    window._varRefSelecionados.push(projeto);
+                }
+                variacaoProjetos.forEach((d, i) => {
+                    const btn = document.getElementById(`btnVarRef_${d.projeto}`);
+                    if (!btn) return;
+                    const cor = coresGrafico[i % coresGrafico.length];
+                    const ativo = window._varRefSelecionados.includes(d.projeto);
+                    btn.style.backgroundColor = ativo ? cor : 'white';
+                    btn.style.color = ativo ? 'white' : cor;
+                });
+                renderizarGraficoVariacaoRef();
+            };
+
+            renderizarGraficoVariacaoRef();
+
+            // Tabela variacao
+            document.getElementById('tabelaVariacaoRef').innerHTML = variacaoProjetos.map(d => {
+                let cells = `<td class="px-3 py-2 font-bold text-gray-900 sticky left-0 bg-white whitespace-nowrap">${d.projeto}</td>`;
+                mesesOrdenados.forEach((m, i) => {
+                    const val = d.totaisMes[m];
+                    if (val === 0) {
+                        cells += `<td class="px-3 py-2 text-right text-gray-300">-</td>`;
+                    } else {
+                        let arrow = '';
+                        if (i > 0) {
+                            const prev = d.totaisMes[mesesOrdenados[i - 1]];
+                            if (prev > 0) {
+                                if (val > prev) arrow = ' <span class="text-red-600 font-bold text-lg">&#9650;</span>';
+                                else if (val < prev) arrow = ' <span class="text-green-600 font-bold text-lg">&#9660;</span>';
+                                else arrow = ' <span class="text-gray-400 text-lg">=</span>';
+                            }
+                        }
+                        cells += `<td class="px-3 py-2 text-right text-gray-700 whitespace-nowrap">${formatCurrency(val)}${arrow}</td>`;
+                    }
+                });
+                return `<tr class="hover:bg-yellow-50">${cells}</tr>`;
+            }).join('');
+
+            // === INDICADOR 3: DESVIO DE QUANTIDADE POR PROJETO (REFEICOES DUPLICADAS) ===
+            const categoriasRef = [
+                { nome: 'Cafe', tipos: ['CAF\u00C9'] },
+                { nome: 'Almoco', tipos: ['ALMO\u00C7O MARMITEX', 'ALMO\u00C7O LOCAL'] },
+                { nome: 'Janta', tipos: ['JANTA MARMITEX', 'JANTA LOCAL'] }
+            ];
+
+            const desvioQtdProjData = projetosFiltrados.map(p => {
+                const dadosProj = dadosFiltrados.filter(d => d.PROJETO === p);
+                if (dadosProj.length === 0) return null;
+                const colab = getColabProjeto(p, colabFiltrados);
+                const diasInfo = getDiasReaisProjeto(p);
+                const dias = diasInfo ? diasInfo.mediaDiasPorFunc : null;
+                const qtdEsperada = (colab > 0 && dias) ? colab * dias : 0;
+                let desvioTotal = 0;
+                const cats = categoriasRef.map(cat => {
+                    const qtdReal = dadosProj.filter(d => cat.tipos.includes(d.TIPO_REFEICAO)).reduce((acc, d) => acc + (d.QUANTIDADE || 0), 0);
+                    const desvio = qtdReal - qtdEsperada;
+                    desvioTotal += desvio;
+                    return { qtdReal, qtdEsperada, desvio };
+                });
+                const percDesvio = qtdEsperada > 0 ? ((desvioTotal / (qtdEsperada * 3)) * 100) : 0;
+                return { projeto: p, colab, dias, cats, qtdEsperada, desvioTotal, percDesvio };
+            }).filter(d => d && d.qtdEsperada > 0).sort((a, b) => b.desvioTotal - a.desvioTotal);
+
+            // Tabela por projeto
+            const fmtDesvioQtd = (v) => {
+                const cls = v > 0 ? 'text-red-600 font-bold' : v < 0 ? 'text-green-600' : 'text-gray-500';
+                const str = v >= 0 ? '+' + v.toLocaleString('pt-BR') : v.toLocaleString('pt-BR');
+                return `<span class="${cls}">${str}</span>`;
+            };
+            document.getElementById('tabelaDesvioQtd').innerHTML = desvioQtdProjData.map(d => {
+                let statusHTML;
+                if (d.percDesvio > 5) {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">Excesso</span>';
+                } else if (d.percDesvio > 0) {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700">Atencao</span>';
+                } else {
+                    statusHTML = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">OK</span>';
+                }
+                const foraMeta = d.desvioTotal > 0;
+                return `<tr class="hover:bg-red-50${foraMeta ? ' bg-red-50' : ''}">
+                    <td class="px-4 py-2 font-semibold text-gray-900 border-r border-gray-200">${d.projeto}</td>
+                    <td class="px-4 py-2 text-center text-gray-700 border-r border-gray-200">${d.colab.toLocaleString('pt-BR')}</td>
+                    <td class="px-4 py-2 text-center text-gray-700 border-r border-gray-200">${d.dias || 'N/A'}</td>
+                    <td class="px-3 py-2 text-center text-gray-600 bg-green-50/30">${d.qtdEsperada.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center text-gray-800 bg-green-50/30">${d.cats[0].qtdReal.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center bg-green-50/30 border-r border-gray-200">${fmtDesvioQtd(d.cats[0].desvio)}</td>
+                    <td class="px-3 py-2 text-center text-gray-600 bg-blue-50/30">${d.qtdEsperada.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center text-gray-800 bg-blue-50/30">${d.cats[1].qtdReal.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center bg-blue-50/30 border-r border-gray-200">${fmtDesvioQtd(d.cats[1].desvio)}</td>
+                    <td class="px-3 py-2 text-center text-gray-600 bg-yellow-50/30">${d.qtdEsperada.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center text-gray-800 bg-yellow-50/30">${d.cats[2].qtdReal.toLocaleString('pt-BR')}</td>
+                    <td class="px-3 py-2 text-center bg-yellow-50/30 border-r border-gray-200">${fmtDesvioQtd(d.cats[2].desvio)}</td>
+                    <td class="px-4 py-2 text-center font-bold border-r border-gray-200 ${d.desvioTotal > 0 ? 'text-red-600' : 'text-green-600'}">${d.desvioTotal >= 0 ? '+' : ''}${d.desvioTotal.toLocaleString('pt-BR')}</td>
+                    <td class="px-4 py-2 text-center">${statusHTML}</td>
+                </tr>`;
+            }).join('');
+
+            // === DETALHAMENTO POR FORNECEDOR ===
+            const tipoVazio = () => ({ qtd: 0, total: 0, vlrUnit: 0 });
+            const gruposFornecedor = {};
+            dadosFiltrados.forEach(d => {
+                const chave = `${d.PROJETO}|${d.CIDADE}|${d.FORNECEDOR}|${d.MES}`;
+                if (!gruposFornecedor[chave]) {
+                    gruposFornecedor[chave] = {
+                        PROJETO: d.PROJETO, CIDADE: d.CIDADE, FORNECEDOR: d.FORNECEDOR,
+                        MES: d.MES, COORDENADOR: d.COORDENADOR,
+                        CAFE: tipoVazio(), ALMOCO_MARMITEX: tipoVazio(), ALMOCO_LOCAL: tipoVazio(),
+                        JANTA_MARMITEX: tipoVazio(), JANTA_LOCAL: tipoVazio(), GELO: tipoVazio(), TOTAL: 0
+                    };
+                }
+                const g = gruposFornecedor[chave];
+                g.TOTAL += (d.VALOR || 0);
+                let tipo = null;
+                switch (d.TIPO_REFEICAO) {
+                    case 'CAF\u00C9': tipo = g.CAFE; break;
+                    case 'ALMO\u00C7O MARMITEX': tipo = g.ALMOCO_MARMITEX; break;
+                    case 'ALMO\u00C7O LOCAL': tipo = g.ALMOCO_LOCAL; break;
+                    case 'JANTA MARMITEX': tipo = g.JANTA_MARMITEX; break;
+                    case 'JANTA LOCAL': tipo = g.JANTA_LOCAL; break;
+                    case 'GELO': tipo = g.GELO; break;
+                }
+                if (tipo) {
+                    tipo.qtd += (d.QUANTIDADE || 0);
+                    tipo.total += (d.VALOR || 0);
+                    if ((d.VALOR_UNITARIO || 0) > 0) tipo.vlrUnit = d.VALOR_UNITARIO;
+                }
+            });
+
+            function fmtCelula(t) {
+                if (t.total <= 0) return '<span class="text-gray-300">-</span>';
+                return `<div class="leading-tight">
+                    <div class="font-semibold">${formatCurrency(t.total)}</div>
+                    <div class="text-xs text-gray-400">${t.qtd} x ${formatCurrency(t.vlrUnit)}</div>
+                </div>`;
+            }
+
+            const linhasPivotadas = Object.values(gruposFornecedor)
+                .sort((a, b) => a.PROJETO - b.PROJETO || a.FORNECEDOR.localeCompare(b.FORNECEDOR))
+                .map(g => `<tr class="hover:bg-purple-50">
+                    <td class="px-4 py-3 font-medium text-gray-900">${g.PROJETO}</td>
+                    <td class="px-4 py-3 text-gray-700 text-sm">${g.CIDADE}</td>
+                    <td class="px-4 py-3 text-gray-600 text-sm">${g.FORNECEDOR}</td>
+                    <td class="px-4 py-3 text-right text-green-600 text-sm">${fmtCelula(g.CAFE)}</td>
+                    <td class="px-4 py-3 text-right text-blue-600 text-sm">${fmtCelula(g.ALMOCO_MARMITEX)}</td>
+                    <td class="px-4 py-3 text-right text-blue-500 text-sm">${fmtCelula(g.ALMOCO_LOCAL)}</td>
+                    <td class="px-4 py-3 text-right text-orange-600 text-sm">${fmtCelula(g.JANTA_MARMITEX)}</td>
+                    <td class="px-4 py-3 text-right text-orange-500 text-sm">${fmtCelula(g.JANTA_LOCAL)}</td>
+                    <td class="px-4 py-3 text-right text-cyan-600 text-sm">${fmtCelula(g.GELO)}</td>
+                    <td class="px-4 py-3 text-right text-purple-600 font-bold text-base">${formatCurrency(g.TOTAL)}</td>
+                </tr>`).join('');
+
+            const rows = Object.values(gruposFornecedor);
+            const totCafe = rows.reduce((a, g) => a + g.CAFE.total, 0);
+            const totAlmMar = rows.reduce((a, g) => a + g.ALMOCO_MARMITEX.total, 0);
+            const totAlmLoc = rows.reduce((a, g) => a + g.ALMOCO_LOCAL.total, 0);
+            const totJanMar = rows.reduce((a, g) => a + g.JANTA_MARMITEX.total, 0);
+            const totJanLoc = rows.reduce((a, g) => a + g.JANTA_LOCAL.total, 0);
+            const totGelo = rows.reduce((a, g) => a + g.GELO.total, 0);
+            const fv = v => v > 0 ? formatCurrency(v) : '-';
+
+            document.getElementById('tabelaRefeicaoDetalhada').innerHTML = linhasPivotadas + `
+                <tr class="bg-purple-200 font-bold">
+                    <td colspan="3" class="px-4 py-3 text-gray-900 text-lg">TOTAL GERAL</td>
+                    <td class="px-4 py-3 text-right text-green-800">${fv(totCafe)}</td>
+                    <td class="px-4 py-3 text-right text-blue-800">${fv(totAlmMar)}</td>
+                    <td class="px-4 py-3 text-right text-blue-700">${fv(totAlmLoc)}</td>
+                    <td class="px-4 py-3 text-right text-orange-800">${fv(totJanMar)}</td>
+                    <td class="px-4 py-3 text-right text-orange-700">${fv(totJanLoc)}</td>
+                    <td class="px-4 py-3 text-right text-cyan-800">${fv(totGelo)}</td>
+                    <td class="px-4 py-3 text-right text-purple-800 text-xl">${formatCurrency(totalFiltrado)}</td>
+                </tr>`;
+        }
+
+        // ============================
+        // RENDERIZAR IMOVEIS
+        // ============================
+        function renderizarImoveis() {
+            const todosProjetos = [...new Set(dadosImoveis.map(d => d.PROJETO))].sort((a, b) => a - b);
+            const todosCoordenadores = [...new Set(dadosImoveis.map(d => d.COORDENADOR).filter(Boolean))].sort();
+
+            criarMonthPicker('monthPickerImoveis', 'imoveis');
+            criarDropdownCheckboxes('dropdownProjetosImoveis', todosProjetos.map(p => ({value: p, label: `Projeto ${p}`})), 'textProjetosImoveis', 'projetos', 'imoveis');
+            criarDropdownCheckboxes('dropdownCoordenadorImoveis', todosCoordenadores, 'textCoordenadorImoveis', 'coordenadores', 'imoveis');
+
+            const dadosFiltrados = obterDadosFiltrados(dadosImoveis, 'imoveis');
+            const totalFiltrado = dadosFiltrados.reduce((acc, d) => acc + totalImovel(d), 0);
+            const colabFiltrados = getColabFiltrados();
+            const projImo = [...new Set(dadosFiltrados.map(d => d.PROJETO))].sort((a, b) => a - b);
+
+            // Separar por categoria
+            const dadosAlojamento = dadosFiltrados.filter(d => d.TIPO_IMOVEL === 'ALOJ COMUNITARIO' || d.TIPO_IMOVEL === 'ALOJ GESTAO');
+            const dadosApoio = dadosFiltrados.filter(d => d.TIPO_IMOVEL === 'IMOVEL APOIO');
+            const dadosSemTipo = dadosFiltrados.filter(d => !d.TIPO_IMOVEL);
+            const totalAloj = dadosAlojamento.reduce((acc, d) => acc + totalImovel(d), 0);
+            const totalApoio = dadosApoio.reduce((acc, d) => acc + totalImovel(d), 0);
+            const totalSemTipo = dadosSemTipo.reduce((acc, d) => acc + totalImovel(d), 0);
+
+            // Cards
+            document.getElementById('totalAlojamento').textContent = formatCurrency(totalAloj + (totalAloj === 0 ? totalSemTipo : 0));
+            document.getElementById('totalApoio').textContent = formatCurrency(totalApoio);
+            document.getElementById('totalFiltradoImoveis').textContent = formatCurrency(totalFiltrado);
+            document.getElementById('qtdResumoImoveis').textContent = `${dadosFiltrados.length} imoveis | ${projImo.length} projetos`;
+
+            // === TABELA ALOJAMENTO: SÓ ALOJ COMUNITARIO + ALOJ GESTAO ===
+            const dadosAlojResumo = projImo.map(p => {
+                const todosProj = dadosFiltrados.filter(d => d.PROJETO === p);
+                const alojProj = todosProj.filter(d => d.TIPO_IMOVEL === 'ALOJ COMUNITARIO' || d.TIPO_IMOVEL === 'ALOJ GESTAO');
+                const semTipoProj = todosProj.filter(d => !d.TIPO_IMOVEL);
+                const imoveisAloj = [...alojProj, ...semTipoProj];
+                const custoAloj = imoveisAloj.reduce((acc, d) => acc + totalImovel(d), 0);
+                if (custoAloj === 0) return null;
+
+                const colab = getColabProjeto(p, colabFiltrados);
+                const alojComProj = todosProj.filter(d => d.TIPO_IMOVEL === 'ALOJ COMUNITARIO');
+                const alojadosReal = alojComProj.reduce((acc, d) => acc + (d.ALOJADOS || 0), 0);
+                const alojados = alojadosReal > 0 ? alojadosReal : colab;
+                const fonteAloj = alojadosReal > 0 ? 'real' : 'colab';
+                const capacidade = alojComProj.reduce((acc, d) => acc + (d.CAPACIDADE_ALOJADOS || 0), 0);
+                const vagasDisp = capacidade > 0 ? capacidade - alojados : null;
+                const percOcupacao = capacidade > 0 ? (alojados / capacidade * 100) : null;
+                const qtdAloj = new Set(imoveisAloj.map(d => d.ENDERECO)).size;
+
+                const aluguel = calcularTotal(imoveisAloj, 'ALUGUEL');
+                const energia = calcularTotal(imoveisAloj, 'ENERGIA');
+                const agua = calcularTotal(imoveisAloj, 'AGUA');
+                const internet = calcularTotal(imoveisAloj, 'INTERNET');
+                const iptu = calcularTotal(imoveisAloj, 'IPTU');
+                const manutencao = calcularTotal(imoveisAloj, 'MANUTENCAO');
+                const custoPessoa = alojados > 0 ? custoAloj / alojados : 0;
+
+                return { projeto: p, colab, alojados, fonteAloj, capacidade, vagasDisp, percOcupacao, qtdAloj, aluguel, energia, agua, internet, iptu, manutencao, custoTotal: custoAloj, custoPessoa };
+            }).filter(Boolean).sort((a, b) => b.custoTotal - a.custoTotal);
+
+            let htmlAloj = dadosAlojResumo.map(d => {
+                const alojStr = d.fonteAloj === 'colab'
+                    ? `<span class="text-purple-600" title="Total de colaboradores do projeto">${d.alojados} *</span>`
+                    : `${d.alojados}`;
+                const vagasStr = d.vagasDisp !== null ? (d.vagasDisp >= 0 ? `<span class="text-green-600">${d.vagasDisp}</span>` : `<span class="text-red-600 font-bold">${d.vagasDisp}</span>`) : '-';
+                const ocupStr = d.percOcupacao !== null ? `<span class="font-bold ${d.percOcupacao > 90 ? 'text-red-600' : d.percOcupacao > 70 ? 'text-yellow-600' : 'text-green-600'}">${d.percOcupacao.toFixed(0)}%</span>` : '-';
+                return `<tr class="hover:bg-green-50">
+                    <td class="px-3 py-2 font-semibold text-gray-900">${d.projeto}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.colab || '-'}</td>
+                    <td class="px-3 py-2 text-right">${d.alojados > 0 ? alojStr : '-'}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.capacidade > 0 ? d.capacidade : '-'}</td>
+                    <td class="px-3 py-2 text-right">${vagasStr}</td>
+                    <td class="px-3 py-2 text-right">${ocupStr}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.qtdAloj}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.aluguel)}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.energia)}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.agua)}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.internet)}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.iptu)}</td>
+                    <td class="px-3 py-2 text-right text-blue-600">${formatCurrency(d.manutencao)}</td>
+                    <td class="px-3 py-2 text-right text-green-600 font-bold">${formatCurrency(d.custoTotal)}</td>
+                    <td class="px-3 py-2 text-right font-bold ${d.custoPessoa > 500 ? 'text-red-600' : 'text-green-600'}">${d.alojados > 0 ? formatCurrency(d.custoPessoa) : '<span class="text-gray-400">N/A</span>'}</td>
+                </tr>`;
+            }).join('');
+
+            // Total Alojamento
+            const aColab = dadosAlojResumo.reduce((a, d) => a + (d.colab || 0), 0);
+            const aAloj = dadosAlojResumo.reduce((a, d) => a + d.alojados, 0);
+            const aCap = dadosAlojResumo.reduce((a, d) => a + d.capacidade, 0);
+            const aVagas = aCap > 0 ? aCap - aAloj : null;
+            const aOcup = aCap > 0 ? (aAloj / aCap * 100).toFixed(0) + '%' : '-';
+            const aQtd = dadosAlojResumo.reduce((a, d) => a + d.qtdAloj, 0);
+            const aAlug = dadosAlojResumo.reduce((a, d) => a + d.aluguel, 0);
+            const aEner = dadosAlojResumo.reduce((a, d) => a + d.energia, 0);
+            const aAgua = dadosAlojResumo.reduce((a, d) => a + d.agua, 0);
+            const aInter = dadosAlojResumo.reduce((a, d) => a + d.internet, 0);
+            const aIptu = dadosAlojResumo.reduce((a, d) => a + d.iptu, 0);
+            const aManut = dadosAlojResumo.reduce((a, d) => a + d.manutencao, 0);
+            const aTotal = dadosAlojResumo.reduce((a, d) => a + d.custoTotal, 0);
+            const aCustoPessoa = aAloj > 0 ? aTotal / aAloj : 0;
+            htmlAloj += `<tr class="bg-green-100 font-bold">
+                <td class="px-3 py-2 text-gray-900">TOTAL</td>
+                <td class="px-3 py-2 text-right text-gray-700">${aColab}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${aAloj || '-'}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${aCap || '-'}</td>
+                <td class="px-3 py-2 text-right">${aVagas !== null ? aVagas : '-'}</td>
+                <td class="px-3 py-2 text-right">${aOcup}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${aQtd}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aAlug)}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aEner)}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aAgua)}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aInter)}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aIptu)}</td>
+                <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(aManut)}</td>
+                <td class="px-3 py-2 text-right text-green-700 text-lg">${formatCurrency(aTotal)}</td>
+                <td class="px-3 py-2 text-right text-green-800">${aAloj > 0 ? formatCurrency(aCustoPessoa) : '-'}</td>
+            </tr>`;
+            document.getElementById('tabelaImoAlojamento').innerHTML = htmlAloj;
+
+            // === TABELA APOIO: SÓ IMOVEL APOIO ===
+            const dadosApoioResumo = projImo.map(p => {
+                const apoioProj = dadosFiltrados.filter(d => d.PROJETO === p && d.TIPO_IMOVEL === 'IMOVEL APOIO');
+                const custoApoio = apoioProj.reduce((acc, d) => acc + totalImovel(d), 0);
+                if (custoApoio === 0) return null;
+
+                const colab = getColabProjeto(p, colabFiltrados);
+                const qtdImoveis = new Set(apoioProj.map(d => d.ENDERECO)).size;
+
+                const aluguel = calcularTotal(apoioProj, 'ALUGUEL');
+                const energia = calcularTotal(apoioProj, 'ENERGIA');
+                const agua = calcularTotal(apoioProj, 'AGUA');
+                const internet = calcularTotal(apoioProj, 'INTERNET');
+                const iptu = calcularTotal(apoioProj, 'IPTU');
+                const manutencao = calcularTotal(apoioProj, 'MANUTENCAO');
+                const custoColab = colab > 0 ? custoApoio / colab : 0;
+
+                return { projeto: p, colab, qtdImoveis, aluguel, energia, agua, internet, iptu, manutencao, custoTotal: custoApoio, custoColab };
+            }).filter(Boolean).sort((a, b) => b.custoTotal - a.custoTotal);
+
+            let htmlApoio = dadosApoioResumo.map(d => {
+                return `<tr class="hover:bg-purple-50">
+                    <td class="px-3 py-2 font-semibold text-gray-900">${d.projeto}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.colab || '-'}</td>
+                    <td class="px-3 py-2 text-right text-gray-700">${d.qtdImoveis}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.aluguel)}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.energia)}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.agua)}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.internet)}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.iptu)}</td>
+                    <td class="px-3 py-2 text-right text-purple-600">${formatCurrency(d.manutencao)}</td>
+                    <td class="px-3 py-2 text-right text-green-600 font-bold">${formatCurrency(d.custoTotal)}</td>
+                    <td class="px-3 py-2 text-right font-bold text-purple-700">${d.colab > 0 ? formatCurrency(d.custoColab) : '<span class="text-gray-400">N/A</span>'}</td>
+                </tr>`;
+            }).join('');
+
+            // Total Apoio
+            const pColab = dadosApoioResumo.reduce((a, d) => a + (d.colab || 0), 0);
+            const pQtd = dadosApoioResumo.reduce((a, d) => a + d.qtdImoveis, 0);
+            const pAlug = dadosApoioResumo.reduce((a, d) => a + d.aluguel, 0);
+            const pEner = dadosApoioResumo.reduce((a, d) => a + d.energia, 0);
+            const pAgua = dadosApoioResumo.reduce((a, d) => a + d.agua, 0);
+            const pInter = dadosApoioResumo.reduce((a, d) => a + d.internet, 0);
+            const pIptu = dadosApoioResumo.reduce((a, d) => a + d.iptu, 0);
+            const pManut = dadosApoioResumo.reduce((a, d) => a + d.manutencao, 0);
+            const pTotal = dadosApoioResumo.reduce((a, d) => a + d.custoTotal, 0);
+            const pCustoColab = pColab > 0 ? pTotal / pColab : 0;
+            htmlApoio += `<tr class="bg-purple-100 font-bold">
+                <td class="px-3 py-2 text-gray-900">TOTAL</td>
+                <td class="px-3 py-2 text-right text-gray-700">${pColab}</td>
+                <td class="px-3 py-2 text-right text-gray-700">${pQtd}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pAlug)}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pEner)}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pAgua)}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pInter)}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pIptu)}</td>
+                <td class="px-3 py-2 text-right text-purple-700">${formatCurrency(pManut)}</td>
+                <td class="px-3 py-2 text-right text-green-700 text-lg">${formatCurrency(pTotal)}</td>
+                <td class="px-3 py-2 text-right text-purple-800">${pColab > 0 ? formatCurrency(pCustoColab) : '-'}</td>
+            </tr>`;
+            document.getElementById('tabelaImoApoio').innerHTML = htmlApoio || '<tr><td colspan="11" class="px-3 py-4 text-center text-gray-400">Dados de IMOVEL APOIO disponiveis a partir de FEVEREIRO/26</td></tr>';
+
+            // === TABELA DETALHADA: POR ENDERECO COM FILTRO DE TIPO ===
+            // Guardar dados filtrados para uso no filtro de tipo
+            window._imoDetalheFiltrados = dadosFiltrados;
+            window._imoDetalheColabFiltrados = colabFiltrados;
+
+            // Descobrir tipos disponiveis
+            const tiposDisponiveis = [...new Set(dadosFiltrados.map(d => d.TIPO_IMOVEL || 'N/I'))].sort();
+            if (!window._filtroTipoImo) window._filtroTipoImo = [];
+
+            const coresTipo = {
+                'ALOJ COMUNITARIO': { bg: '#dcfce7', border: '#16a34a', text: '#15803d' },
+                'ALOJ GESTAO': { bg: '#fef3c7', border: '#d97706', text: '#b45309' },
+                'IMOVEL APOIO': { bg: '#f3e8ff', border: '#9333ea', text: '#7e22ce' },
+                'N/I': { bg: '#f3f4f6', border: '#6b7280', text: '#4b5563' }
+            };
+
+            const btnsContainer = document.getElementById('filtroTipoImoBtns');
+            btnsContainer.innerHTML = tiposDisponiveis.map(tipo => {
+                const cores = coresTipo[tipo] || coresTipo['N/I'];
+                const ativo = window._filtroTipoImo.length === 0 || window._filtroTipoImo.includes(tipo);
+                return `<button onclick="toggleFiltroTipoImo('${tipo}')"
+                    class="px-3 py-1.5 rounded-full text-xs font-bold transition-all border-2"
+                    id="btnTipoImo_${tipo.replace(/\s/g,'_')}"
+                    style="border-color:${cores.border}; ${ativo ? `background-color:${cores.bg}; color:${cores.text};` : `background-color:white; color:#9ca3af; border-color:#d1d5db;`}">
+                    ${tipo}
+                </button>`;
+            }).join('') + `<button onclick="limparFiltroTipoImo()"
+                class="px-3 py-1.5 rounded-full text-xs font-medium transition-all border-2 border-gray-300 bg-white text-gray-500 hover:bg-gray-100">
+                Todos
+            </button>`;
+
+            window.toggleFiltroTipoImo = function(tipo) {
+                const idx = window._filtroTipoImo.indexOf(tipo);
+                if (idx >= 0) {
+                    window._filtroTipoImo.splice(idx, 1);
+                } else {
+                    window._filtroTipoImo.push(tipo);
+                }
+                renderTabelaDetalhado();
+            };
+
+            window.limparFiltroTipoImo = function() {
+                window._filtroTipoImo = [];
+                renderTabelaDetalhado();
+            };
+
+            function renderTabelaDetalhado() {
+                const dados = window._imoDetalheFiltrados;
+                const colabFilt = window._imoDetalheColabFiltrados;
+                const filtroTipo = window._filtroTipoImo;
+
+                // Atualizar visual dos botoes
+                tiposDisponiveis.forEach(tipo => {
+                    const btn = document.getElementById(`btnTipoImo_${tipo.replace(/\s/g,'_')}`);
+                    if (!btn) return;
+                    const cores = coresTipo[tipo] || coresTipo['N/I'];
+                    const ativo = filtroTipo.length === 0 || filtroTipo.includes(tipo);
+                    btn.style.backgroundColor = ativo ? cores.bg : 'white';
+                    btn.style.color = ativo ? cores.text : '#9ca3af';
+                    btn.style.borderColor = ativo ? cores.border : '#d1d5db';
+                });
+
+                // Filtrar dados por tipo selecionado
+                let dadosDet = dados.filter(d => totalImovel(d) > 0);
+                if (filtroTipo.length > 0) {
+                    dadosDet = dadosDet.filter(d => filtroTipo.includes(d.TIPO_IMOVEL || 'N/I'));
+                }
+
+                const linhas = dadosDet
+                    .sort((a, b) => a.PROJETO - b.PROJETO || (a.TIPO_IMOVEL || '').localeCompare(b.TIPO_IMOVEL || '') || (a.ENDERECO || '').localeCompare(b.ENDERECO || ''))
+                    .map(d => {
+                        const total = totalImovel(d);
+                        const colab = getColabProjeto(d.PROJETO, colabFilt);
+                        const alojadosReal = d.ALOJADOS || 0;
+                        const alojados = alojadosReal > 0 ? alojadosReal : colab;
+                        const fonteAloj = alojadosReal > 0 ? 'real' : 'colab';
+                        const alojStr = fonteAloj === 'colab'
+                            ? `<span class="text-purple-600" title="Total de colaboradores do projeto">${alojados} *</span>`
+                            : `${alojados}`;
+                        const cap = d.CAPACIDADE_ALOJADOS || 0;
+                        const vagasDisp = cap > 0 ? cap - alojados : null;
+                        const percOcup = cap > 0 ? (alojados / cap * 100) : null;
+                        const vagasStr = vagasDisp !== null ? (vagasDisp >= 0 ? `<span class="text-green-600">${vagasDisp}</span>` : `<span class="text-red-600 font-bold">${vagasDisp}</span>`) : '-';
+                        const ocupStr = percOcup !== null ? `<span class="font-bold ${percOcup > 90 ? 'text-red-600' : percOcup > 70 ? 'text-yellow-600' : 'text-green-600'}">${percOcup.toFixed(0)}%</span>` : '-';
+
+                        const tipoLabel = d.TIPO_IMOVEL || 'N/I';
+                        let badge = 'bg-gray-100 text-gray-600';
+                        if (d.TIPO_IMOVEL === 'ALOJ COMUNITARIO') badge = 'bg-green-100 text-green-700';
+                        else if (d.TIPO_IMOVEL === 'ALOJ GESTAO') badge = 'bg-amber-100 text-amber-700';
+                        else if (d.TIPO_IMOVEL === 'IMOVEL APOIO') badge = 'bg-purple-100 text-purple-700';
+
+                        return `<tr class="hover:bg-green-50">
+                            <td class="px-3 py-2 font-medium text-gray-900">${d.PROJETO}</td>
+                            <td class="px-3 py-2 text-xs"><span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${tipoLabel}</span></td>
+                            <td class="px-3 py-2 text-gray-700 text-xs">${d.ENDERECO || '-'}</td>
+                            <td class="px-3 py-2 text-gray-600 text-xs">${d.DESTINACAO || '-'}</td>
+                            <td class="px-3 py-2 text-right">${alojados > 0 ? alojStr : '-'}</td>
+                            <td class="px-3 py-2 text-right text-gray-700">${cap > 0 ? cap : '-'}</td>
+                            <td class="px-3 py-2 text-right">${vagasStr}</td>
+                            <td class="px-3 py-2 text-right">${ocupStr}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.ALUGUEL > 0 ? formatCurrency(d.ALUGUEL) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.ENERGIA > 0 ? formatCurrency(d.ENERGIA) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.AGUA > 0 ? formatCurrency(d.AGUA) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.INTERNET > 0 ? formatCurrency(d.INTERNET) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.IPTU > 0 ? formatCurrency(d.IPTU) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-blue-600">${d.MANUTENCAO > 0 ? formatCurrency(d.MANUTENCAO) : '-'}</td>
+                            <td class="px-3 py-2 text-right text-green-600 font-bold">${formatCurrency(total)}</td>
+                        </tr>`;
+                    });
+
+                // Total
+                const tAlug = dadosDet.reduce((a, d) => a + (d.ALUGUEL || 0), 0);
+                const tEner = dadosDet.reduce((a, d) => a + (d.ENERGIA || 0), 0);
+                const tAgua = dadosDet.reduce((a, d) => a + (d.AGUA || 0), 0);
+                const tInter = dadosDet.reduce((a, d) => a + (d.INTERNET || 0), 0);
+                const tIptu = dadosDet.reduce((a, d) => a + (d.IPTU || 0), 0);
+                const tManut = dadosDet.reduce((a, d) => a + (d.MANUTENCAO || 0), 0);
+                const tTotal = dadosDet.reduce((a, d) => a + totalImovel(d), 0);
+                linhas.push(`<tr class="bg-green-100 font-bold">
+                    <td class="px-3 py-2 text-gray-900" colspan="4">TOTAL (${dadosDet.length} imoveis)</td>
+                    <td class="px-3 py-2 text-right text-gray-700">-</td>
+                    <td class="px-3 py-2 text-right text-gray-700">-</td>
+                    <td class="px-3 py-2 text-right">-</td>
+                    <td class="px-3 py-2 text-right">-</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tAlug)}</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tEner)}</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tAgua)}</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tInter)}</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tIptu)}</td>
+                    <td class="px-3 py-2 text-right text-blue-700">${formatCurrency(tManut)}</td>
+                    <td class="px-3 py-2 text-right text-green-700 text-lg">${formatCurrency(tTotal)}</td>
+                </tr>`);
+                document.getElementById('tabelaImoDetalhado').innerHTML = linhas.join('');
+            }
+
+            renderTabelaDetalhado();
+        }
+
+        // ============================
+        // INICIALIZAR
+        // ============================
+        document.addEventListener('DOMContentLoaded', async () => {
+            const loading = document.createElement('div');
+            loading.id = 'loading-overlay';
+            loading.innerHTML = '<div style="position:fixed;inset:0;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;"><div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div><p style="font-size:1.1rem;color:#374151;font-weight:600;">Carregando dados do servidor...</p><p id="loading-status" style="font-size:0.85rem;color:#6b7280;margin-top:8px;">Conectando...</p></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+            document.body.appendChild(loading);
+            const status = document.getElementById('loading-status');
+
+            try {
+                status.textContent = 'Buscando imoveis, refeicoes, colaboradores e dias trabalhados...';
+                const [resImo, resRef, resColab, resDias, resAlojAprox] = await Promise.all([
+                    fetch('/api/imoveis'),
+                    fetch('/api/refeicao'),
+                    fetch('/api/colaboradores?inicio=2025-01&fim=2026-12'),
+                    fetch('/api/dias-trabalhados'),
+                    fetch('/api/alojados-aprox')
+                ]);
+
+                if (!resImo.ok || !resRef.ok || !resColab.ok) throw new Error('Falha ao buscar dados do servidor');
+
+                const [imoveis, refeicao, colabResp, diasResp, alojAproxResp] = await Promise.all([
+                    resImo.json(), resRef.json(), resColab.json(), resDias.ok ? resDias.json() : [], resAlojAprox.ok ? resAlojAprox.json() : {}
+                ]);
+
+                // Filtrar AGOSTO/25 de todos os dados
+                const MES_IGNORADO = 'AGOSTO/25';
+                dadosImoveis = imoveis.filter(d => d.MES !== MES_IGNORADO);
+                dadosRefeicao = refeicao.filter(d => d.MES !== MES_IGNORADO);
+                dadosColaboradores = (colabResp.dados || colabResp).filter(d => d.DATA !== MES_IGNORADO);
+                dadosDiasTrabalhados = diasResp.filter(d => d.MES !== MES_IGNORADO);
+                alojadosAprox = alojAproxResp;
+
+                console.log(`[Servidor] Imoveis: ${dadosImoveis.length}, Refeicoes: ${dadosRefeicao.length}, Colaboradores: ${dadosColaboradores.length}, DiasTrab: ${dadosDiasTrabalhados.length}, AlojAprox: ${Object.keys(alojadosAprox).length} projetos`);
+            } catch (e) {
+                console.error('[Servidor] Erro ao carregar dados:', e.message);
+                alert('Erro ao conectar com o servidor. Verifique se o servidor esta rodando (node server.js).');
+            }
+
+            loading.remove();
+            atualizarResumoGeral();
+            trocarAba('refeicao');
+        });
+    </script>
+</body>
+</html>

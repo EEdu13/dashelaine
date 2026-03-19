@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.*
+.claude/
+*.xlsx
+dados_completos.js
+dados_dias_trabalhados.js
+*.pdf
