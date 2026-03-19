@@ -1,64 +1,214 @@
+require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const sql = require('mssql');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const crypto = require('crypto');
 const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Servir arquivos estáticos
-app.use(express.static(path.join(__dirname)));
+// === VALIDAR ENV VARS ===
+const requiredEnvVars = ['AZURE_SQL_SERVER', 'AZURE_SQL_DATABASE', 'AZURE_SQL_USER', 'AZURE_SQL_PASSWORD',
+  'SECULLUM_AUTH_URL', 'SECULLUM_API_URL', 'SECULLUM_USER', 'SECULLUM_PASS', 'SECULLUM_BANCOS',
+  'JWT_SECRET', 'LOGIN_USER', 'LOGIN_PASS'];
+const missing = requiredEnvVars.filter(v => !process.env[v]);
+if (missing.length > 0) {
+  console.error(`[ERRO] Variáveis de ambiente faltando: ${missing.join(', ')}`);
+  process.exit(1);
+}
 
 // === CONFIGS ===
+const JWT_SECRET = process.env.JWT_SECRET;
+const LOGIN_USER = process.env.LOGIN_USER;
+const LOGIN_PASS = process.env.LOGIN_PASS;
+
 const sqlConfig = {
-  server: 'alrflorestal.database.windows.net',
-  database: 'Tabela_teste',
-  user: 'sqladmin',
-  password: 'SenhaForte123!',
-  port: 1433,
+  server: process.env.AZURE_SQL_SERVER,
+  database: process.env.AZURE_SQL_DATABASE,
+  user: process.env.AZURE_SQL_USER,
+  password: process.env.AZURE_SQL_PASSWORD,
+  port: parseInt(process.env.AZURE_SQL_PORT || '1433'),
   options: { encrypt: true, trustServerCertificate: false },
   pool: { max: 10, min: 0, idleTimeoutMillis: 30000 }
 };
 
-const SECULLUM_AUTH_URL = 'https://autenticador.secullum.com.br/Token';
-const SECULLUM_API_URL = 'https://pontowebintegracaoexterna.secullum.com.br/IntegracaoExterna';
-const SECULLUM_USER = 'ferreira.eduardo@larsil.com.br';
-const SECULLUM_PASS = 'larsil123@';
-const BANCOS_ATIVOS = [73561, 78833, 80600, 83576];
+const SECULLUM_AUTH_URL = process.env.SECULLUM_AUTH_URL;
+const SECULLUM_API_URL = process.env.SECULLUM_API_URL;
+const SECULLUM_USER = process.env.SECULLUM_USER;
+const SECULLUM_PASS = process.env.SECULLUM_PASS;
+const BANCOS_ATIVOS = (process.env.SECULLUM_BANCOS || '').split(',').map(Number).filter(Boolean);
 
 const NOMES_MESES = ['JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL', 'MAIO', 'JUNHO',
   'JULHO', 'AGOSTO', 'SETEMBRO', 'OUTUBRO', 'NOVEMBRO', 'DEZEMBRO'];
+const MESES_INDEX = {};
+NOMES_MESES.forEach((m, i) => { MESES_INDEX[m] = i; });
 
-function gerarMeses(inicio, fim) {
-  const meses = [];
-  let atual = new Date(inicio.getFullYear(), inicio.getMonth(), 1);
-  const limite = new Date(fim.getFullYear(), fim.getMonth(), 1);
-  while (atual <= limite) {
-    const ano = String(atual.getFullYear()).slice(-2);
-    meses.push(`${NOMES_MESES[atual.getMonth()]}/${ano}`);
-    atual.setMonth(atual.getMonth() + 1);
+// === MIDDLEWARE ===
+app.use(compression());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+
+// Headers de segurança
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+// Rate limiting por IP (100 req/min)
+const rateLimitMap = new Map();
+app.use('/api/', (req, res, next) => {
+  const ip = req.ip;
+  const now = Date.now();
+  if (!rateLimitMap.has(ip)) { rateLimitMap.set(ip, { count: 1, start: now }); return next(); }
+  const entry = rateLimitMap.get(ip);
+  if (now - entry.start > 60000) { entry.count = 1; entry.start = now; return next(); }
+  if (++entry.count > 100) return res.status(429).json({ error: 'Muitas requisições' });
+  next();
+});
+setInterval(() => { const now = Date.now(); for (const [ip, e] of rateLimitMap) { if (now - e.start > 60000) rateLimitMap.delete(ip); } }, 300000);
+
+// ============================================================
+// === AUTENTICAÇÃO (LOGIN + JWT) ===
+// ============================================================
+
+// Brute-force protection (5 tentativas por IP, bloqueio 15min)
+const loginAttempts = new Map();
+function checkBruteForce(ip) {
+  const entry = loginAttempts.get(ip);
+  if (!entry) return true;
+  if (Date.now() - entry.first > 15 * 60 * 1000) { loginAttempts.delete(ip); return true; }
+  return entry.count < 5;
+}
+function recordFailedLogin(ip) {
+  const entry = loginAttempts.get(ip);
+  if (!entry) { loginAttempts.set(ip, { count: 1, first: Date.now() }); return; }
+  entry.count++;
+}
+function clearLoginAttempts(ip) { loginAttempts.delete(ip); }
+
+// Login endpoint
+app.post('/api/login', (req, res) => {
+  const ip = req.ip;
+  if (!checkBruteForce(ip)) {
+    return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos.' });
   }
-  return meses;
+
+  const { usuario, senha } = req.body;
+  if (!usuario || !senha) return res.status(400).json({ error: 'Usuário e senha obrigatórios' });
+
+  // Comparação segura contra timing attacks
+  const userMatch = crypto.timingSafeEqual(
+    Buffer.from(String(usuario).toUpperCase().padEnd(64)),
+    Buffer.from(LOGIN_USER.toUpperCase().padEnd(64))
+  );
+  const passMatch = crypto.timingSafeEqual(
+    Buffer.from(String(senha).padEnd(64)),
+    Buffer.from(LOGIN_PASS.padEnd(64))
+  );
+
+  if (!userMatch || !passMatch) {
+    recordFailedLogin(ip);
+    return res.status(401).json({ error: 'Usuário ou senha inválidos' });
+  }
+
+  clearLoginAttempts(ip);
+  const token = jwt.sign({ user: LOGIN_USER }, JWT_SECRET, { expiresIn: '12h' });
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 12 * 60 * 60 * 1000
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ ok: true });
+});
+
+app.get('/api/check-auth', (req, res) => {
+  const token = req.cookies.token;
+  if (!token) return res.json({ authenticated: false });
+  try {
+    jwt.verify(token, JWT_SECRET);
+    res.json({ authenticated: true });
+  } catch {
+    res.json({ authenticated: false });
+  }
+});
+
+// Auth middleware - protege todas as rotas /api/ exceto login/logout/check-auth/health
+function authMiddleware(req, res, next) {
+  const open = ['/api/login', '/api/logout', '/api/check-auth', '/api/health', '/api/cache-status'];
+  if (open.includes(req.path)) return next();
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: 'Não autenticado' });
+  try {
+    jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.clearCookie('token');
+    return res.status(401).json({ error: 'Sessão expirada' });
+  }
+}
+app.use('/api/', authMiddleware);
+
+// Servir arquivos estáticos
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
+  etag: true
+}));
+
+// ============================================================
+// === POOL SQL COMPARTILHADO ===
+// ============================================================
+let poolPromise = null;
+function getPool() {
+  if (!poolPromise) {
+    poolPromise = sql.connect(sqlConfig).catch(err => { poolPromise = null; throw err; });
+  }
+  return poolPromise;
 }
 
-// === CACHE ===
-let cache = {
-  colaboradores: null,
-  lastUpdate: null,
-  updating: false
-};
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutos
+// ============================================================
+// === CACHE SYSTEM ===
+// ============================================================
+let cache = { colaboradores: null, lastUpdate: null, updating: false };
+let cacheImoveis = { dados: null, lastUpdate: null };
+let cacheRefeicao = { dados: null, lastUpdate: null };
+let cacheDiasTrab = { dados: null, lastUpdate: null };
+let cacheAlojados = { dados: null, lastUpdate: null };
+const CACHE_TTL = 10 * 60 * 1000;
+const CACHE_SQL_TTL = 15 * 60 * 1000;
+const CACHE_DIAS_TTL = 30 * 60 * 1000;
 
+let warmupDone = false;
+let warmupProgress = { status: 'starting', step: '', pct: 0 };
+
+// ============================================================
 // === SECULLUM HELPERS ===
+// ============================================================
 let secullumToken = null;
 let tokenExpiry = 0;
 
 async function getSecullumToken() {
   if (secullumToken && Date.now() < tokenExpiry) return secullumToken;
-
   const res = await fetch(SECULLUM_AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=password&username=${SECULLUM_USER}&password=${encodeURIComponent(SECULLUM_PASS)}&client_id=3`
+    body: `grant_type=password&username=${encodeURIComponent(SECULLUM_USER)}&password=${encodeURIComponent(SECULLUM_PASS)}&client_id=3`,
+    signal: AbortSignal.timeout(15000)
   });
+  if (!res.ok) throw new Error(`Secullum auth failed: ${res.status}`);
   const data = await res.json();
   secullumToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
@@ -68,43 +218,42 @@ async function getSecullumToken() {
 async function secullumGet(endpoint, bancoId) {
   const token = await getSecullumToken();
   const res = await fetch(`${SECULLUM_API_URL}${endpoint}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      secullumidbancoselecionado: String(bancoId)
-    }
+    headers: { Authorization: `Bearer ${token}`, secullumidbancoselecionado: String(bancoId) },
+    signal: AbortSignal.timeout(60000)
   });
-  if (!res.ok) {
-    console.warn(`[Secullum] Erro ${res.status} em ${endpoint} banco ${bancoId}`);
-    return [];
-  }
+  if (!res.ok) { console.warn(`[Secullum] Erro ${res.status} em ${endpoint} banco ${bancoId}`); return []; }
   return res.json();
 }
 
-// === LÓGICA DE COLABORADORES ===
-function mesAnoToDate(mesAno) {
-  const meses = {
-    'JANEIRO': 0, 'FEVEREIRO': 1, 'MARÇO': 2, 'ABRIL': 3,
-    'MAIO': 4, 'JUNHO': 5, 'JULHO': 6, 'AGOSTO': 7,
-    'SETEMBRO': 8, 'OUTUBRO': 9, 'NOVEMBRO': 10, 'DEZEMBRO': 11
-  };
-  const [mes, ano] = mesAno.split('/');
-  return new Date(2000 + parseInt(ano), meses[mes], 1);
+// ============================================================
+// === HELPERS ===
+// ============================================================
+function gerarMeses(inicio, fim) {
+  const meses = [];
+  let atual = new Date(inicio.getFullYear(), inicio.getMonth(), 1);
+  const limite = new Date(fim.getFullYear(), fim.getMonth(), 1);
+  while (atual <= limite) {
+    meses.push(`${NOMES_MESES[atual.getMonth()]}/${String(atual.getFullYear()).slice(-2)}`);
+    atual.setMonth(atual.getMonth() + 1);
+  }
+  return meses;
 }
 
-function normCpf(cpf) {
-  return (cpf || '').replace(/[\.\-\/\s]/g, '');
+function mesAnoToDate(mesAno) {
+  const [mes, ano] = mesAno.split('/');
+  return new Date(2000 + parseInt(ano), MESES_INDEX[mes], 1);
 }
+
+function normCpf(cpf) { return (cpf || '').replace(/[\.\-\/\s]/g, ''); }
 
 function normProjeto(proj) {
   if (!proj) return null;
   const s = String(proj).trim();
   if (!s || s === 'ABANDONO') return null;
   const match = s.match(/^(\d+)/);
-  if (match) return Number(match[1]);
-  return null;
+  return match ? Number(match[1]) : null;
 }
 
-// Extrair descrição do departamento (pode ser string ou objeto)
 function getDepartamentoDesc(dept) {
   if (!dept) return null;
   if (typeof dept === 'string') return dept;
@@ -112,499 +261,349 @@ function getDepartamentoDesc(dept) {
   return null;
 }
 
+// ============================================================
+// === DATA LOADING (com paralelismo) ===
+// ============================================================
+
 async function carregarDadosBase() {
-  console.log('[Colaboradores] Carregando dados base...');
-  const startTime = Date.now();
+  console.log('[Colaboradores] Carregando...');
+  const t = Date.now();
 
-  // 1. Azure
-  const pool = await sql.connect(sqlConfig);
-  const azureResult = await pool.request().query('SELECT * FROM COLABORADORES');
+  // SQL e Secullum em PARALELO
+  const [azureResult, ...bancosResults] = await Promise.all([
+    getPool().then(p => p.request().query('SELECT * FROM COLABORADORES')),
+    ...BANCOS_ATIVOS.map(id => secullumGet('/Funcionarios', id).catch(e => { console.warn(`[Secullum] Erro banco ${id}:`, e.message); return []; }))
+  ]);
+
   const colaboradoresAzure = azureResult.recordset;
-  console.log(`[Azure] ${colaboradoresAzure.length} registros na tabela COLABORADORES`);
-
-  // 2. Secullum (todos os bancos)
   const todosFuncionarios = [];
-  for (const bancoId of BANCOS_ATIVOS) {
-    const funcs = await secullumGet('/Funcionarios', bancoId);
-    const ativos = funcs.filter(f => !f.Demissao).length;
-    const demitidos = funcs.length - ativos;
-    console.log(`[Secullum] Banco ${bancoId}: ${funcs.length} funcionários (${ativos} ativos, ${demitidos} demitidos)`);
+  BANCOS_ATIVOS.forEach((bancoId, i) => {
+    const funcs = bancosResults[i] || [];
+    console.log(`[Secullum] Banco ${bancoId}: ${funcs.length} func`);
     funcs.forEach(f => { f._bancoId = bancoId; });
     todosFuncionarios.push(...funcs);
-    await new Promise(r => setTimeout(r, 250));
-  }
-  console.log(`[Secullum] Total bruto: ${todosFuncionarios.length} funcionários de ${BANCOS_ATIVOS.length} bancos`);
+  });
 
   // Manter TODOS os registros por CPF (mesmo CPF pode ter múltiplas passagens em projetos/bancos)
-  // Agrupar por CPF para poder fazer dedup por mês depois
   const funcsPorCpf = {};
-  todosFuncionarios.forEach(f => {
+  for (const f of todosFuncionarios) {
     const cpf = normCpf(f.Cpf);
-    if (!cpf) return;
+    if (!cpf) continue;
     if (!funcsPorCpf[cpf]) funcsPorCpf[cpf] = [];
     funcsPorCpf[cpf].push(f);
-  });
-  // funcsUnicos = todos os registros (para compatibilidade com azureSemSecullum)
-  const funcsUnicos = todosFuncionarios.filter(f => normCpf(f.Cpf));
-  console.log(`[Secullum] ${Object.keys(funcsPorCpf).length} CPFs únicos, ${funcsUnicos.length} registros totais`);
+  }
 
-  // Indexar Azure por CPF
   const azurePorCpf = {};
-  colaboradoresAzure.forEach(c => {
-    const cpf = normCpf(c.CPF);
-    if (cpf) azurePorCpf[cpf] = c;
-  });
+  for (const c of colaboradoresAzure) { const cpf = normCpf(c.CPF); if (cpf) azurePorCpf[cpf] = c; }
 
-  // Mapeamento projeto → coordenador (SEMPRE usando PROJETO_RH)
   const projetoCoordenador = {};
-  colaboradoresAzure.forEach(c => {
+  for (const c of colaboradoresAzure) {
     const coord = (c.COORDENADOR || '').trim();
-    if (!coord) return;
+    if (!coord) continue;
     const proj = normProjeto(c.PROJETO_RH);
-    if (proj && !projetoCoordenador[proj]) {
-      projetoCoordenador[proj] = coord;
-    }
-  });
-  console.log(`[Mapeamento] Projeto→Coordenador:`, JSON.stringify(projetoCoordenador));
+    if (proj && !projetoCoordenador[proj]) projetoCoordenador[proj] = coord;
+  }
 
-  // Identificar funcionários Azure SEM registro Secullum
-  const azureSemSecullum = colaboradoresAzure.filter(c => {
-    const cpf = normCpf(c.CPF);
-    return cpf && !funcsPorCpf[cpf];
-  });
-  console.log(`[Azure] ${azureSemSecullum.length} funcionários SOMENTE no Azure (sem Secullum)`);
+  const azureSemSecullum = colaboradoresAzure.filter(c => { const cpf = normCpf(c.CPF); return cpf && !funcsPorCpf[cpf]; });
 
-  // Diagnóstico: contar CPFs únicos sem projeto válido
-  let semProjeto = 0;
-  Object.entries(funcsPorCpf).forEach(([cpf, registros]) => {
-    const azure = azurePorCpf[cpf];
-    const temProjeto = registros.some(func => {
-      const projAzure = azure ? normProjeto(azure.PROJETO_RH) : null;
-      const projSec = normProjeto(getDepartamentoDesc(func.Departamento));
-      return projAzure || projSec;
-    });
-    if (!temProjeto) semProjeto++;
-  });
-  console.log(`[Diagnóstico] ${semProjeto} CPFs sem projeto válido (serão ignorados)`);
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[Colaboradores] Carregamento concluído em ${elapsed}s`);
-  return { funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum };
+  console.log(`[Colaboradores] ${Object.keys(funcsPorCpf).length} CPFs únicos, ${todosFuncionarios.length} registros em ${((Date.now() - t) / 1000).toFixed(1)}s`);
+  return { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum };
 }
 
-function calcularColaboradoresPorMes(funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum, mesesList) {
-  const dadosColaboradores = [];
-
-  // Agrupar todos os registros Secullum por CPF (inclui ativos e demitidos)
-  const todosRegistrosPorCpf = {};
-  funcsUnicos.forEach(func => {
-    const cpf = normCpf(func.Cpf);
-    if (!cpf) return;
-    if (!todosRegistrosPorCpf[cpf]) todosRegistrosPorCpf[cpf] = [];
-    todosRegistrosPorCpf[cpf].push(func);
-  });
-
-  mesesList.forEach(mesAno => {
+function calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, mesesList) {
+  const result = [];
+  for (const mesAno of mesesList) {
     const dataMes = mesAnoToDate(mesAno);
     const primeiroDia = new Date(dataMes.getFullYear(), dataMes.getMonth(), 1);
     const ultimoDia = new Date(dataMes.getFullYear(), dataMes.getMonth() + 1, 0);
-
-    const contagemProjeto = {};
-    const cpfContado = new Set(); // evitar contar mesmo CPF 2x no mesmo mês
-
-    function incrementar(projeto, coordenador) {
-      if (!contagemProjeto[projeto]) {
-        contagemProjeto[projeto] = { quantidade: 0, coordenador: null };
-      }
-      contagemProjeto[projeto].quantidade++;
-      if (coordenador && !contagemProjeto[projeto].coordenador) {
-        contagemProjeto[projeto].coordenador = coordenador;
-      }
+    const cont = {};
+    const cpfContado = new Set();
+    function inc(projeto, coordenador) {
+      if (!cont[projeto]) cont[projeto] = { qtd: 0, coord: null };
+      cont[projeto].qtd++;
+      if (coordenador && !cont[projeto].coord) cont[projeto].coord = coordenador;
     }
-
-    // 1. Para cada CPF, verificar TODOS os registros Secullum
-    // Usar o registro que estava ativo naquele mês específico
-    Object.entries(todosRegistrosPorCpf).forEach(([cpf, registros]) => {
-      // Filtrar registros ativos neste mês
-      const ativosNoMes = registros.filter(func => {
-        const admissao = func.Admissao ? new Date(func.Admissao) : null;
-        const demissao = func.Demissao ? new Date(func.Demissao) : null;
-        if (!admissao || admissao > ultimoDia) return false;
-        if (demissao && demissao < primeiroDia) return false;
+    // Para cada CPF, verificar TODOS os registros e usar o que estava ativo naquele mês
+    for (const [cpf, registros] of Object.entries(funcsPorCpf)) {
+      const ativosNoMes = registros.filter(f => {
+        const adm = f.Admissao ? new Date(f.Admissao) : null;
+        const dem = f.Demissao ? new Date(f.Demissao) : null;
+        if (!adm || adm > ultimoDia) return false;
+        if (dem && dem < primeiroDia) return false;
         return true;
       });
-
-      if (ativosNoMes.length === 0) return;
-      if (cpfContado.has(cpf)) return;
+      if (ativosNoMes.length === 0 || cpfContado.has(cpf)) continue;
       cpfContado.add(cpf);
-
-      // Escolher o melhor registro para este mês:
-      // Prioridade 1: registro demitido NESTE mês (tem o projeto histórico correto)
-      // Prioridade 2: registro ativo (sem demissão)
-      // Prioridade 3: qualquer registro ativo no período
-      let funcEscolhido = ativosNoMes.find(f => {
+      // Prioridade: demitido NESTE mês > ativo (sem demissão) > qualquer
+      const func = ativosNoMes.find(f => {
         if (!f.Demissao) return false;
         const dem = new Date(f.Demissao);
         return dem >= primeiroDia && dem <= ultimoDia;
       }) || ativosNoMes.find(f => !f.Demissao) || ativosNoMes[0];
 
-      // Para projeto: usar departamento Secullum do registro escolhido (dado histórico)
-      // Depois fallback para Azure PROJETO_RH (dado atual)
-      let projeto = null;
-      let coordenador = null;
-
-      // Departamento Secullum = projeto real naquele período
-      const deptDesc = getDepartamentoDesc(funcEscolhido.Departamento);
-      const projSecullum = normProjeto(deptDesc);
-
-      const azure = azurePorCpf[cpf];
-      const projAzure = azure ? normProjeto(azure.PROJETO_RH) : null;
-
-      // Para demitidos: sempre usar departamento Secullum (o Azure pode já ter sido atualizado)
-      if (funcEscolhido.Demissao) {
-        projeto = projSecullum || projAzure;
+      let proj = null, coord = null;
+      const az = azurePorCpf[cpf];
+      // Demitidos: usar departamento Secullum (histórico). Ativos: usar Azure (atual)
+      if (func.Demissao) {
+        proj = normProjeto(getDepartamentoDesc(func.Departamento));
+        if (!proj && az) proj = normProjeto(az.PROJETO_RH);
       } else {
-        // Para ativos: usar Azure PROJETO_RH (mais confiável para projeto atual)
-        projeto = projAzure || projSecullum;
+        if (az) proj = normProjeto(az.PROJETO_RH);
+        if (!proj) proj = normProjeto(getDepartamentoDesc(func.Departamento));
       }
-
-      if (azure) {
-        coordenador = (azure.COORDENADOR || '').trim() || null;
-      }
-      if (!coordenador && projeto) {
-        coordenador = projetoCoordenador[projeto] || null;
-      }
-
-      if (!projeto) return;
-      incrementar(projeto, coordenador);
+      if (az) coord = (az.COORDENADOR || '').trim() || null;
+      if (!coord && proj) coord = projetoCoordenador[proj] || null;
+      if (proj) inc(proj, coord);
+    }
+    // Funcionários SOMENTE no Azure (sem Secullum)
+    for (const az of azureSemSecullum) {
+      const cpf = normCpf(az.CPF);
+      if (cpfContado.has(cpf)) continue;
+      const adm = az.DATA_ADMISSAO ? new Date(az.DATA_ADMISSAO) : null;
+      if (!adm || adm > ultimoDia) continue;
+      const proj = normProjeto(az.PROJETO_RH);
+      if (proj) { cpfContado.add(cpf); inc(proj, (az.COORDENADOR || '').trim() || null); }
+    }
+    Object.entries(cont).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([p, info]) => {
+      result.push({ DATA: mesAno, PROJETO: Number(p), QUANTIDADE: info.qtd, COORDENADOR: info.coord || projetoCoordenador[Number(p)] || null });
     });
-
-    // 2. Funcionários SOMENTE no Azure (sem Secullum)
-    azureSemSecullum.forEach(azure => {
-      const cpf = normCpf(azure.CPF);
-      if (cpfContado.has(cpf)) return;
-
-      const admissao = azure.DATA_ADMISSAO ? new Date(azure.DATA_ADMISSAO) : null;
-      if (!admissao || admissao > ultimoDia) return;
-
-      const projeto = normProjeto(azure.PROJETO_RH);
-      if (!projeto) return;
-
-      cpfContado.add(cpf);
-      const coordenador = (azure.COORDENADOR || '').trim() || null;
-      incrementar(projeto, coordenador);
-    });
-
-    // Gerar saída
-    Object.entries(contagemProjeto)
-      .sort((a, b) => Number(a[0]) - Number(b[0]))
-      .forEach(([projeto, info]) => {
-        const projNum = Number(projeto);
-        dadosColaboradores.push({
-          DATA: mesAno,
-          PROJETO: projNum,
-          QUANTIDADE: info.quantidade,
-          COORDENADOR: info.coordenador || projetoCoordenador[projNum] || null
-        });
-      });
-  });
-
-  return dadosColaboradores;
+  }
+  return result;
 }
 
-// === ENDPOINTS ===
+// Dias trabalhados - com paralelismo por banco
+const TIPOS_EXCLUIDOS_BATIDA = new Set(['FERIAS', 'L.MATER', 'L.PATER', 'A. INSS', 'FOLGABH']);
 
-// /api/colaboradores?inicio=2025-01&fim=2026-03
-app.get('/api/colaboradores', async (req, res) => {
-  try {
-    // Carregar dados base (com cache)
-    if (!cache.colaboradores || !cache.lastUpdate || (Date.now() - cache.lastUpdate >= CACHE_TTL)) {
-      if (cache.updating) {
-        if (cache.colaboradores) {
-          // Retornar cache antigo enquanto atualiza
-          const { funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
-          const agora = new Date();
-          const mesesList = gerarMeses(new Date(agora.getFullYear(), agora.getMonth() - 5, 1), agora);
-          const dados = calcularColaboradoresPorMes(funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum, mesesList);
-          return res.json({ meses: mesesList, dados });
-        }
-        return res.status(503).json({ error: 'Dados sendo atualizados, tente novamente em instantes' });
+function gerarMesesProcessar() {
+  const meses = [];
+  const agora = new Date();
+  let atual = new Date(2025, 7, 1);
+  while (atual <= agora) {
+    const y = atual.getFullYear(), m = atual.getMonth();
+    const last = new Date(y, m + 1, 0).getDate();
+    meses.push({ label: `${NOMES_MESES[m]}/${String(y).slice(-2)}`, inicio: `${y}-${String(m+1).padStart(2,'0')}-01`, fim: `${y}-${String(m+1).padStart(2,'0')}-${last}` });
+    atual.setMonth(m + 1);
+  }
+  return meses;
+}
+
+async function processarBancoDiasTrab(bancoId, mesesProcessar) {
+  const resultado = {};
+  let funcionarios;
+  try { funcionarios = await secullumGet('/Funcionarios', bancoId); } catch (e) { return resultado; }
+  if (!funcionarios || funcionarios.length === 0) return resultado;
+
+  const funcMap = {};
+  for (const f of funcionarios) { const p = normProjeto(getDepartamentoDesc(f.Departamento)); if (p) funcMap[f.Id] = p; }
+
+  // Buscar batidas de todos os meses em paralelo (2 por vez para não sobrecarregar)
+  for (let i = 0; i < mesesProcessar.length; i += 2) {
+    const batch = mesesProcessar.slice(i, i + 2);
+    const results = await Promise.all(batch.map(mes =>
+      secullumGet(`/Batidas?dataInicio=${mes.inicio}&dataFim=${mes.fim}`, bancoId)
+        .catch(e => { console.warn(`[DiasTrab] Erro ${mes.label} banco ${bancoId}`); return []; })
+    ));
+    batch.forEach((mes, j) => {
+      for (const b of results[j]) {
+        const proj = funcMap[b.FuncionarioId];
+        if (!proj) continue;
+        const e1 = (b.Entrada1 || '').trim();
+        if (!e1 || TIPOS_EXCLUIDOS_BATIDA.has(e1)) continue;
+        const key = `${proj}|${mes.label}`;
+        if (!resultado[key]) resultado[key] = { projeto: proj, mes: mes.label, diasReais: 0, funcsSet: new Set() };
+        resultado[key].diasReais++;
+        resultado[key].funcsSet.add(b.FuncionarioId);
       }
-      cache.updating = true;
-      try {
-        const dadosBase = await carregarDadosBase();
-        cache.colaboradores = dadosBase;
-        cache.lastUpdate = Date.now();
-      } finally {
-        cache.updating = false;
-      }
-    }
-
-    const { funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
-
-    // Determinar período
-    const agora = new Date();
-    let inicio, fim;
-
-    if (req.query.inicio) {
-      const [anoI, mesI] = req.query.inicio.split('-').map(Number);
-      inicio = new Date(anoI, mesI - 1, 1);
-    } else {
-      inicio = new Date(agora.getFullYear(), agora.getMonth() - 5, 1);
-    }
-
-    if (req.query.fim) {
-      const [anoF, mesF] = req.query.fim.split('-').map(Number);
-      fim = new Date(anoF, mesF - 1, 1);
-    } else {
-      fim = new Date(agora.getFullYear(), agora.getMonth(), 1);
-    }
-
-    const mesesList = gerarMeses(inicio, fim);
-    const dados = calcularColaboradoresPorMes(funcsUnicos, azurePorCpf, projetoCoordenador, azureSemSecullum, mesesList);
-
-    // Log totais por mês
-    const totaisPorMes = {};
-    dados.forEach(d => {
-      if (!totaisPorMes[d.DATA]) totaisPorMes[d.DATA] = 0;
-      totaisPorMes[d.DATA] += d.QUANTIDADE;
     });
-    console.log(`[Colaboradores] Totais por mês:`, JSON.stringify(totaisPorMes));
-
-    res.json({ meses: mesesList, dados });
-  } catch (err) {
-    cache.updating = false;
-    console.error('[Colaboradores] Erro:', err.message);
-    res.status(500).json({ error: err.message });
+    if (i + 2 < mesesProcessar.length) await new Promise(r => setTimeout(r, 200));
   }
-});
-
-// Dados de imóveis (Azure SQL - CUSTOS_IMOVEIS em tempo real)
-app.get('/api/imoveis', async (req, res) => {
-  try {
-    const pool = await sql.connect(sqlConfig);
-    const result = await pool.request().query(`
-      SELECT ID, MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO,
-             ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS
-      FROM CUSTOS_IMOVEIS
-      ORDER BY MES_ANO, PROJETO, ENDERECO
-    `);
-    const dados = result.recordset.map(r => {
-      const anoCurto = r.MES_ANO ? r.MES_ANO.split('/')[1].slice(-2) : '';
-      return {
-        PROJETO: r.PROJETO,
-        COORDENADOR: r.COORDENADOR,
-        IMOVEL: r.IMOVEL,
-        ENDERECO: r.ENDERECO,
-        TIPO_IMOVEL: r.TIPO_IMOVEL || null,
-        DESTINACAO: r.DESTINACAO,
-        MES: `${r.MES}/${anoCurto}`,
-        MES_ANO: r.MES_ANO,
-        ALUGUEL: Number(r.ALUGUEL) || 0,
-        ENERGIA: Number(r.ENERGIA) || 0,
-        AGUA: Number(r.AGUA) || 0,
-        INTERNET: Number(r.INTERNET) || 0,
-        IPTU: Number(r.IPTU) || 0,
-        MANUTENCAO: Number(r.MANUTENCAO) || 0,
-        ALOJADOS: r.ALOJADOS || 0,
-        CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS || 0
-      };
-    });
-    console.log(`[Imóveis] ${dados.length} registros de CUSTOS_IMOVEIS`);
-    res.json(dados);
-  } catch (err) {
-    console.error('[Imóveis] Erro:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Dados de refeição (Azure SQL - PAG_REFEICAO em tempo real)
-app.get('/api/refeicao', async (req, res) => {
-  try {
-    const pool = await sql.connect(sqlConfig);
-    const result = await pool.request().query(`
-      SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR,
-             TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL,
-             MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE
-      FROM PAG_REFEICAO
-      ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO
-    `);
-    const dados = result.recordset.map(r => ({
-      PROJETO: r.PROJETO,
-      COORDENADOR: r.COORDENADOR,
-      CIDADE: r.CIDADE,
-      FORNECEDOR: r.FORNECEDOR,
-      TIPO_REFEICAO: r.TIPO_REFEICAO,
-      VALOR_UNITARIO: Number(r.VALOR_UNITARIO) || 0,
-      QUANTIDADE: r.QUANTIDADE,
-      VALOR: Number(r.VALOR_TOTAL) || 0,
-      MES: r.MES_NOME,
-      QUINZENA: r.QUINZENA,
-      CLIENTE: r.CLIENTE
-    }));
-    console.log(`[Refeição] ${dados.length} registros de PAG_REFEICAO`);
-    res.json(dados);
-  } catch (err) {
-    console.error('[Refeição] Erro:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// === DIAS TRABALHADOS (Secullum Batidas) ===
-// Tipos excluídos (NÃO contam como dia de refeição)
-// Tipos que NÃO contam como dia de refeição:
-// FOLGABH = folga campo (saiu do alojamento), FERIAS, licenças, INSS
-const TIPOS_EXCLUIDOS_BATIDA = ['FERIAS', 'L.MATER', 'L.PATER', 'A. INSS', 'FOLGABH'];
-
-// Cache para dias trabalhados
-let cacheDiasTrab = { dados: null, lastUpdate: null };
-const CACHE_DIAS_TTL = 30 * 60 * 1000; // 30 minutos
+  return resultado;
+}
 
 async function calcularDiasTrabalhados() {
-  console.log('[DiasTrab] Calculando dias trabalhados via Secullum Batidas...');
-  const startTime = Date.now();
+  console.log('[DiasTrab] Calculando (paralelo)...');
+  const t = Date.now();
+  const mesesProcessar = gerarMesesProcessar();
 
-  // Meses para processar (todos que têm dados de refeição)
-  const mesesProcessar = [
-    { label: 'AGOSTO/25', inicio: '2025-08-01', fim: '2025-08-31' },
-    { label: 'SETEMBRO/25', inicio: '2025-09-01', fim: '2025-09-30' },
-    { label: 'OUTUBRO/25', inicio: '2025-10-01', fim: '2025-10-31' },
-    { label: 'NOVEMBRO/25', inicio: '2025-11-01', fim: '2025-11-30' },
-    { label: 'DEZEMBRO/25', inicio: '2025-12-01', fim: '2025-12-31' },
-    { label: 'JANEIRO/26', inicio: '2026-01-01', fim: '2026-01-31' },
-    { label: 'FEVEREIRO/26', inicio: '2026-02-01', fim: '2026-02-28' },
-    { label: 'MARÇO/26', inicio: '2026-03-01', fim: '2026-03-31' },
-  ];
+  // Todos os bancos em PARALELO
+  const bancosResults = await Promise.all(
+    BANCOS_ATIVOS.map(id => processarBancoDiasTrab(id, mesesProcessar))
+  );
 
-  const resultado = {};
-
-  // Buscar funcionários de cada banco para mapear Id -> Projeto
-  for (const bancoId of BANCOS_ATIVOS) {
-    let funcionarios;
-    try {
-      funcionarios = await secullumGet('/Funcionarios', bancoId);
-    } catch (err) {
-      console.warn(`[DiasTrab] Erro ao buscar funcionários banco ${bancoId}:`, err.message);
-      continue;
-    }
-    if (!funcionarios || funcionarios.length === 0) {
-      console.warn(`[DiasTrab] Banco ${bancoId}: sem funcionários (expirado ou vazio), pulando`);
-      continue;
-    }
-    const funcMap = {};
-    for (const f of funcionarios) {
-      const depto = getDepartamentoDesc(f.Departamento);
-      const projeto = normProjeto(depto);
-      if (projeto) funcMap[f.Id] = projeto;
-    }
-    console.log(`[DiasTrab] Banco ${bancoId}: ${Object.keys(funcMap).length} funcionários mapeados`);
-
-    await new Promise(r => setTimeout(r, 300));
-
-    // Para cada mês, buscar batidas
-    for (const mes of mesesProcessar) {
-      let batidas;
-      try {
-        batidas = await secullumGet(`/Batidas?dataInicio=${mes.inicio}&dataFim=${mes.fim}`, bancoId);
-      } catch (err) {
-        console.warn(`[DiasTrab] Erro batidas ${mes.label} banco ${bancoId}:`, err.message);
-        await new Promise(r => setTimeout(r, 300));
-        continue;
-      }
-
-      for (const b of batidas) {
-        const funcId = b.FuncionarioId;
-        const projeto = funcMap[funcId];
-        if (!projeto) continue;
-
-        const entrada1 = (b.Entrada1 || '').trim();
-        if (!entrada1) continue;
-        if (TIPOS_EXCLUIDOS_BATIDA.includes(entrada1)) continue;
-
-        const key = `${projeto}|${mes.label}`;
-        if (!resultado[key]) {
-          resultado[key] = { projeto, mes: mes.label, diasReais: 0, funcsSet: new Set() };
-        }
-        resultado[key].diasReais++;
-        resultado[key].funcsSet.add(funcId);
-      }
-
-      await new Promise(r => setTimeout(r, 300));
+  // Merge resultados
+  const merged = {};
+  for (const r of bancosResults) {
+    for (const [key, val] of Object.entries(r)) {
+      if (!merged[key]) { merged[key] = { ...val, funcsSet: new Set(val.funcsSet) }; }
+      else { merged[key].diasReais += val.diasReais; val.funcsSet.forEach(id => merged[key].funcsSet.add(id)); }
     }
   }
 
-  // Converter para array final
-  const dados = Object.values(resultado).map(d => ({
-    PROJETO: d.projeto,
-    MES: d.mes,
-    DIAS_REAIS: d.diasReais,
+  const dados = Object.values(merged).map(d => ({
+    PROJETO: d.projeto, MES: d.mes, DIAS_REAIS: d.diasReais,
     FUNCIONARIOS: d.funcsSet.size,
     MEDIA_DIAS_FUNC: d.funcsSet.size > 0 ? Math.round((d.diasReais / d.funcsSet.size) * 10) / 10 : 0
   })).sort((a, b) => a.MES.localeCompare(b.MES) || a.PROJETO - b.PROJETO);
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[DiasTrab] ${dados.length} registros gerados em ${elapsed}s`);
+  console.log(`[DiasTrab] ${dados.length} registros em ${((Date.now() - t) / 1000).toFixed(1)}s`);
   return dados;
 }
 
-app.get('/api/dias-trabalhados', async (req, res) => {
-  try {
-    if (cacheDiasTrab.dados && cacheDiasTrab.lastUpdate && (Date.now() - cacheDiasTrab.lastUpdate < CACHE_DIAS_TTL)) {
-      console.log('[DiasTrab] Retornando do cache');
-      return res.json(cacheDiasTrab.dados);
-    }
-    const dados = await calcularDiasTrabalhados();
-    cacheDiasTrab = { dados, lastUpdate: Date.now() };
-    res.json(dados);
-  } catch (err) {
-    console.error('[DiasTrab] Erro:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// ============================================================
+// === PRE-WARM: carregar TUDO ao iniciar ===
+// ============================================================
+async function preWarm() {
+  console.log('[PreWarm] Iniciando pré-carregamento de todos os dados...');
+  const t = Date.now();
 
-// Alojados aproximados por projeto (cargos operacionais do Azure COLABORADORES)
-app.get('/api/alojados-aprox', async (req, res) => {
   try {
-    const pool = await sql.connect(sqlConfig);
-    const result = await pool.request().query(`
-      SELECT PROJETO_RH as PROJETO, COUNT(*) as ALOJADOS_APROX
-      FROM COLABORADORES
-      WHERE SITUACAO = '1'
-        AND FUNCAO_EXECUTANTE IN ('TRABALHADOR','OPERADOR','MOTORISTA','MECANICO','LIDER')
-      GROUP BY PROJETO_RH
-      ORDER BY PROJETO_RH
-    `);
-    const dados = {};
-    result.recordset.forEach(r => {
-      const proj = Number(r.PROJETO);
-      if (proj) dados[proj] = r.ALOJADOS_APROX;
+    // Fase 1: SQL (rápido, ~2s)
+    warmupProgress = { status: 'loading', step: 'Conectando ao banco de dados...', pct: 5 };
+    const pool = await getPool();
+
+    warmupProgress = { status: 'loading', step: 'Carregando imóveis e refeições...', pct: 10 };
+    const [imoveisResult, refeicaoResult, alojadosResult] = await Promise.all([
+      pool.request().query(`SELECT ID, MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`),
+      pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`),
+      pool.request().query(`SELECT PROJETO_RH as PROJETO, COUNT(*) as ALOJADOS_APROX FROM COLABORADORES WHERE SITUACAO = '1' AND FUNCAO_EXECUTANTE IN ('TRABALHADOR','OPERADOR','MOTORISTA','MECANICO','LIDER') GROUP BY PROJETO_RH ORDER BY PROJETO_RH`)
+    ]);
+
+    cacheImoveis.dados = imoveisResult.recordset.map(r => {
+      const anoCurto = r.MES_ANO ? r.MES_ANO.split('/')[1].slice(-2) : '';
+      return { PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, IMOVEL: r.IMOVEL, ENDERECO: r.ENDERECO, TIPO_IMOVEL: r.TIPO_IMOVEL || null, DESTINACAO: r.DESTINACAO, MES: `${r.MES}/${anoCurto}`, MES_ANO: r.MES_ANO, ALUGUEL: Number(r.ALUGUEL)||0, ENERGIA: Number(r.ENERGIA)||0, AGUA: Number(r.AGUA)||0, INTERNET: Number(r.INTERNET)||0, IPTU: Number(r.IPTU)||0, MANUTENCAO: Number(r.MANUTENCAO)||0, ALOJADOS: r.ALOJADOS||0, CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS||0 };
     });
-    console.log(`[AlojadosAprox] ${Object.keys(dados).length} projetos`);
-    res.json(dados);
-  } catch (err) {
-    console.error('[AlojadosAprox] Erro:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+    cacheImoveis.lastUpdate = Date.now();
 
-// Health check
-app.get('/api/health', (req, res) => {
+    cacheRefeicao.dados = refeicaoResult.recordset.map(r => ({
+      PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, CIDADE: r.CIDADE, FORNECEDOR: r.FORNECEDOR, TIPO_REFEICAO: r.TIPO_REFEICAO, VALOR_UNITARIO: Number(r.VALOR_UNITARIO)||0, QUANTIDADE: r.QUANTIDADE, VALOR: Number(r.VALOR_TOTAL)||0, MES: r.MES_NOME, QUINZENA: r.QUINZENA, CLIENTE: r.CLIENTE
+    }));
+    cacheRefeicao.lastUpdate = Date.now();
+
+    cacheAlojados.dados = {};
+    for (const r of alojadosResult.recordset) { const p = Number(r.PROJETO); if (p) cacheAlojados.dados[p] = r.ALOJADOS_APROX; }
+    cacheAlojados.lastUpdate = Date.now();
+
+    console.log(`[PreWarm] SQL OK: ${cacheImoveis.dados.length} imóveis, ${cacheRefeicao.dados.length} refeições`);
+
+    // Fase 2: Secullum Colaboradores (paralelo, ~5-10s)
+    warmupProgress = { status: 'loading', step: 'Carregando colaboradores (Secullum)...', pct: 30 };
+    cache.colaboradores = await carregarDadosBase();
+    cache.lastUpdate = Date.now();
+
+    // Fase 3: Dias trabalhados (paralelo, ~30-60s)
+    warmupProgress = { status: 'loading', step: 'Calculando dias trabalhados...', pct: 60 };
+    cacheDiasTrab.dados = await calcularDiasTrabalhados();
+    cacheDiasTrab.lastUpdate = Date.now();
+
+    warmupDone = true;
+    warmupProgress = { status: 'ready', step: 'Pronto!', pct: 100 };
+    console.log(`[PreWarm] COMPLETO em ${((Date.now() - t) / 1000).toFixed(1)}s`);
+  } catch (err) {
+    console.error('[PreWarm] Erro:', err.message);
+    warmupDone = true; // permitir acesso mesmo com erro
+    warmupProgress = { status: 'ready', step: 'Pronto (com erros)', pct: 100 };
+  }
+}
+
+// ============================================================
+// === ENDPOINTS ===
+// ============================================================
+
+app.get('/api/cache-status', (req, res) => {
   res.json({
-    status: 'ok',
-    bancos: BANCOS_ATIVOS,
+    ready: warmupDone,
+    progress: warmupProgress,
     cache: {
-      loaded: !!cache.colaboradores,
-      lastUpdate: cache.lastUpdate ? new Date(cache.lastUpdate).toISOString() : null,
-      age: cache.lastUpdate ? `${((Date.now() - cache.lastUpdate) / 1000).toFixed(0)}s` : null
+      imoveis: !!cacheImoveis.dados,
+      refeicao: !!cacheRefeicao.dados,
+      colaboradores: !!cache.colaboradores,
+      diasTrab: !!cacheDiasTrab.dados
     }
   });
 });
 
+app.get('/api/colaboradores', async (req, res) => {
+  try {
+    if (!cache.colaboradores || !cache.lastUpdate || (Date.now() - cache.lastUpdate >= CACHE_TTL)) {
+      if (cache.updating) {
+        if (cache.colaboradores) {
+          const { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
+          const agora = new Date();
+          const ml = gerarMeses(new Date(agora.getFullYear(), agora.getMonth() - 5, 1), agora);
+          return res.json({ meses: ml, dados: calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, ml) });
+        }
+        return res.status(503).json({ error: 'Dados sendo atualizados' });
+      }
+      cache.updating = true;
+      try { cache.colaboradores = await carregarDadosBase(); cache.lastUpdate = Date.now(); } finally { cache.updating = false; }
+    }
+    const { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
+    const agora = new Date();
+    const inicio = req.query.inicio ? new Date(...req.query.inicio.split('-').map((v,i) => i===1 ? Number(v)-1 : Number(v))) : new Date(agora.getFullYear(), agora.getMonth()-5, 1);
+    const fim = req.query.fim ? new Date(...req.query.fim.split('-').map((v,i) => i===1 ? Number(v)-1 : Number(v))) : new Date(agora.getFullYear(), agora.getMonth(), 1);
+    res.json({ meses: gerarMeses(inicio, fim), dados: calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, gerarMeses(inicio, fim)) });
+  } catch (err) {
+    cache.updating = false;
+    console.error('[Colaboradores] Erro:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+app.get('/api/imoveis', async (req, res) => {
+  try {
+    if (cacheImoveis.dados && cacheImoveis.lastUpdate && (Date.now() - cacheImoveis.lastUpdate < CACHE_SQL_TTL)) return res.json(cacheImoveis.dados);
+    const pool = await getPool();
+    const result = await pool.request().query(`SELECT ID, MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`);
+    cacheImoveis.dados = result.recordset.map(r => { const a = r.MES_ANO ? r.MES_ANO.split('/')[1].slice(-2) : ''; return { PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, IMOVEL: r.IMOVEL, ENDERECO: r.ENDERECO, TIPO_IMOVEL: r.TIPO_IMOVEL||null, DESTINACAO: r.DESTINACAO, MES: `${r.MES}/${a}`, MES_ANO: r.MES_ANO, ALUGUEL: Number(r.ALUGUEL)||0, ENERGIA: Number(r.ENERGIA)||0, AGUA: Number(r.AGUA)||0, INTERNET: Number(r.INTERNET)||0, IPTU: Number(r.IPTU)||0, MANUTENCAO: Number(r.MANUTENCAO)||0, ALOJADOS: r.ALOJADOS||0, CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS||0 }; });
+    cacheImoveis.lastUpdate = Date.now();
+    res.json(cacheImoveis.dados);
+  } catch (err) { console.error('[Imóveis] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
+});
+
+app.get('/api/refeicao', async (req, res) => {
+  try {
+    if (cacheRefeicao.dados && cacheRefeicao.lastUpdate && (Date.now() - cacheRefeicao.lastUpdate < CACHE_SQL_TTL)) return res.json(cacheRefeicao.dados);
+    const pool = await getPool();
+    const result = await pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`);
+    cacheRefeicao.dados = result.recordset.map(r => ({ PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, CIDADE: r.CIDADE, FORNECEDOR: r.FORNECEDOR, TIPO_REFEICAO: r.TIPO_REFEICAO, VALOR_UNITARIO: Number(r.VALOR_UNITARIO)||0, QUANTIDADE: r.QUANTIDADE, VALOR: Number(r.VALOR_TOTAL)||0, MES: r.MES_NOME, QUINZENA: r.QUINZENA, CLIENTE: r.CLIENTE }));
+    cacheRefeicao.lastUpdate = Date.now();
+    res.json(cacheRefeicao.dados);
+  } catch (err) { console.error('[Refeição] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
+});
+
+app.get('/api/dias-trabalhados', async (req, res) => {
+  try {
+    if (cacheDiasTrab.dados && cacheDiasTrab.lastUpdate && (Date.now() - cacheDiasTrab.lastUpdate < CACHE_DIAS_TTL)) return res.json(cacheDiasTrab.dados);
+    const dados = await calcularDiasTrabalhados();
+    cacheDiasTrab = { dados, lastUpdate: Date.now() };
+    res.json(dados);
+  } catch (err) { console.error('[DiasTrab] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
+});
+
+app.get('/api/alojados-aprox', async (req, res) => {
+  try {
+    if (cacheAlojados.dados && cacheAlojados.lastUpdate && (Date.now() - cacheAlojados.lastUpdate < CACHE_SQL_TTL)) return res.json(cacheAlojados.dados);
+    const pool = await getPool();
+    const result = await pool.request().query(`SELECT PROJETO_RH as PROJETO, COUNT(*) as ALOJADOS_APROX FROM COLABORADORES WHERE SITUACAO = '1' AND FUNCAO_EXECUTANTE IN ('TRABALHADOR','OPERADOR','MOTORISTA','MECANICO','LIDER') GROUP BY PROJETO_RH ORDER BY PROJETO_RH`);
+    cacheAlojados.dados = {};
+    for (const r of result.recordset) { const p = Number(r.PROJETO); if (p) cacheAlojados.dados[p] = r.ALOJADOS_APROX; }
+    cacheAlojados.lastUpdate = Date.now();
+    res.json(cacheAlojados.dados);
+  } catch (err) { console.error('[Alojados] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), warmup: warmupDone,
+    cache: { colaboradores: !!cache.colaboradores, imoveis: !!cacheImoveis.dados, refeicao: !!cacheRefeicao.dados, diasTrab: !!cacheDiasTrab.dados }
+  });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => { console.log('[Server] SIGTERM'); try { await sql.close(); } catch {} process.exit(0); });
+
 // === INICIAR ===
-app.listen(PORT, () => {
-  console.log(`Dashboard rodando em http://localhost:${PORT}`);
-  console.log('Endpoints:');
-  console.log('  GET /api/colaboradores?inicio=2025-01&fim=2026-03');
-  console.log('  GET /api/dias-trabalhados');
-  console.log('  GET /api/health');
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Dashboard na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
+  // Pre-warm em background após servidor iniciar
+  preWarm();
 });
