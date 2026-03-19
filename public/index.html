@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard de Gestao de Despesas</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.17/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <style>
@@ -73,9 +73,15 @@
 <body class="bg-gray-50">
     <div class="min-h-screen p-6">
         <!-- Header -->
-        <div class="mb-8 no-print">
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">Dashboard de Gestao de Despesas</h1>
-            <p class="text-gray-600">Relatorio Completo - Imoveis e Refeicoes</p>
+        <div class="mb-8 no-print flex justify-between items-start">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Dashboard de Gestao de Despesas</h1>
+                <p class="text-gray-600">Relatorio Completo - Imoveis e Refeicoes</p>
+            </div>
+            <button onclick="doLogout()" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                Sair
+            </button>
         </div>
         <div class="print-header" style="display:none;">
             <h1 class="text-xl font-bold">ALR Florestal / Larsil - Relatorio de Despesas</h1>
@@ -1688,50 +1694,65 @@
         // ============================
         // INICIALIZAR
         // ============================
+
+        // Logout
+        async function doLogout() {
+            await fetch('/api/logout', { method: 'POST' });
+            window.location.href = '/login.html';
+        }
+
+        // Helper: fetch com verificação de auth
+        async function authFetch(url, opts) {
+            const res = await fetch(url, opts);
+            if (res.status === 401) { window.location.href = '/login.html'; throw new Error('auth'); }
+            return res;
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
+            // Verificar autenticação
+            try {
+                const authRes = await fetch('/api/check-auth');
+                const authData = await authRes.json();
+                if (!authData.authenticated) { window.location.href = '/login.html'; return; }
+            } catch { window.location.href = '/login.html'; return; }
+
             const loading = document.createElement('div');
             loading.id = 'loading-overlay';
-            loading.innerHTML = '<div style="position:fixed;inset:0;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;"><div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div><p style="font-size:1.1rem;color:#374151;font-weight:600;">Carregando dados do servidor...</p><p id="loading-status" style="font-size:0.85rem;color:#6b7280;margin-top:8px;">Conectando...</p></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+            loading.innerHTML = '<div style="position:fixed;inset:0;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;"><div style="text-align:center;"><div style="width:48px;height:48px;border:4px solid #e5e7eb;border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;"></div><p style="font-size:1.1rem;color:#374151;font-weight:600;">Carregando dados...</p><p id="loading-status" style="font-size:0.85rem;color:#6b7280;margin-top:8px;">Conectando...</p></div></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
             document.body.appendChild(loading);
             const status = document.getElementById('loading-status');
 
             try {
-                // 1. Carregar dados principais primeiro (SQL - rápido)
-                status.textContent = 'Buscando imoveis, refeicoes e colaboradores...';
-                const [resImo, resRef, resColab, resAlojAprox] = await Promise.all([
-                    fetch('/api/imoveis'),
-                    fetch('/api/refeicao'),
-                    fetch('/api/colaboradores?inicio=2025-01&fim=2026-12'),
-                    fetch('/api/alojados-aprox')
+                // Todos os dados em paralelo (pre-warm garante cache pronto)
+                status.textContent = 'Buscando dados...';
+                const [resImo, resRef, resColab, resDias, resAlojAprox] = await Promise.all([
+                    authFetch('/api/imoveis'),
+                    authFetch('/api/refeicao'),
+                    authFetch('/api/colaboradores?inicio=2025-01&fim=2026-12'),
+                    authFetch('/api/dias-trabalhados').catch(() => null),
+                    authFetch('/api/alojados-aprox').catch(() => null)
                 ]);
 
-                if (!resImo.ok || !resRef.ok || !resColab.ok) throw new Error('Falha ao buscar dados do servidor');
+                if (!resImo.ok || !resRef.ok || !resColab.ok) throw new Error('Falha ao buscar dados');
 
-                const [imoveis, refeicao, colabResp, alojAproxResp] = await Promise.all([
-                    resImo.json(), resRef.json(), resColab.json(), resAlojAprox.ok ? resAlojAprox.json() : {}
+                const [imoveis, refeicao, colabResp] = await Promise.all([
+                    resImo.json(), resRef.json(), resColab.json()
                 ]);
+                const diasResp = resDias && resDias.ok ? await resDias.json() : [];
+                const alojAproxResp = resAlojAprox && resAlojAprox.ok ? await resAlojAprox.json() : {};
 
                 const MES_IGNORADO = 'AGOSTO/25';
                 dadosImoveis = imoveis.filter(d => d.MES !== MES_IGNORADO);
                 dadosRefeicao = refeicao.filter(d => d.MES !== MES_IGNORADO);
                 dadosColaboradores = (colabResp.dados || colabResp).filter(d => d.DATA !== MES_IGNORADO);
-                alojadosAprox = alojAproxResp;
+                dadosDiasTrabalhados = (diasResp || []).filter(d => d.MES !== MES_IGNORADO);
+                alojadosAprox = alojAproxResp || {};
 
-                // 2. Dias trabalhados separado (Secullum - lento, pode demorar 2+ min)
-                status.textContent = 'Buscando dias trabalhados (Secullum)... pode demorar';
-                try {
-                    const resDias = await fetch('/api/dias-trabalhados', { signal: AbortSignal.timeout(300000) });
-                    const diasResp = resDias.ok ? await resDias.json() : [];
-                    dadosDiasTrabalhados = diasResp.filter(d => d.MES !== MES_IGNORADO);
-                } catch (eDias) {
-                    console.warn('[Servidor] Dias trabalhados indisponivel:', eDias.message);
-                    dadosDiasTrabalhados = [];
-                }
-
-                console.log(`[Servidor] Imoveis: ${dadosImoveis.length}, Refeicoes: ${dadosRefeicao.length}, Colaboradores: ${dadosColaboradores.length}, DiasTrab: ${dadosDiasTrabalhados.length}, AlojAprox: ${Object.keys(alojadosAprox).length} projetos`);
+                console.log(`[OK] Imo:${dadosImoveis.length} Ref:${dadosRefeicao.length} Col:${dadosColaboradores.length} Dias:${dadosDiasTrabalhados.length}`);
             } catch (e) {
-                console.error('[Servidor] Erro ao carregar dados:', e.message);
-                alert('Erro ao conectar com o servidor. Verifique se o servidor esta rodando (node server.js).');
+                if (e.message === 'auth') return;
+                console.error('[Erro]', e.message);
+                alert('Erro ao carregar dados. Verifique o servidor.');
             }
 
             loading.remove();

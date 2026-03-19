@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Dashboard Dashelaine</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .login-bg {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #1e40af 100%);
+            min-height: 100vh;
+        }
+        .login-card {
+            backdrop-filter: blur(20px);
+            background: rgba(255,255,255,0.95);
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+        .input-field {
+            transition: all 0.2s;
+            border: 2px solid #e5e7eb;
+        }
+        .input-field:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+            outline: none;
+        }
+        .btn-login {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            transition: all 0.2s;
+        }
+        .btn-login:hover:not(:disabled) {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37,99,235,0.4);
+        }
+        .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
+        .shake { animation: shake 0.5s ease-in-out; }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .fade-in { animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .warmup-bar { height: 4px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
+        .warmup-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #2563eb); transition: width 0.5s ease; border-radius: 2px; }
+    </style>
+</head>
+<body class="login-bg flex items-center justify-content-center">
+    <div class="w-full flex items-center justify-center min-h-screen p-4">
+        <div class="login-card rounded-2xl p-8 w-full max-w-md">
+            <!-- Logo / Header -->
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
+                    <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-800">Dashboard Dashelaine</h1>
+                <p class="text-gray-500 text-sm mt-1">Gestao de Despesas - ALR Florestal</p>
+            </div>
+
+            <!-- Erro -->
+            <div id="errorBox" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm fade-in"></div>
+
+            <!-- Form -->
+            <form id="loginForm" autocomplete="off">
+                <div class="mb-4">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Usuario</label>
+                    <input type="text" id="usuario" name="usuario" class="input-field w-full px-4 py-3 rounded-lg text-gray-800"
+                           placeholder="Digite seu usuario" autocomplete="username" maxlength="50" required>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Senha</label>
+                    <div class="relative">
+                        <input type="password" id="senha" name="senha" class="input-field w-full px-4 py-3 rounded-lg text-gray-800 pr-12"
+                               placeholder="Digite sua senha" autocomplete="current-password" maxlength="100" required>
+                        <button type="button" id="togglePass" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                            <svg id="eyeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" id="btnLogin" class="btn-login w-full py-3 rounded-lg text-white font-semibold text-base">
+                    Entrar
+                </button>
+            </form>
+
+            <!-- Warmup status -->
+            <div id="warmupBox" class="hidden mt-6 text-center">
+                <div class="warmup-bar mb-2">
+                    <div id="warmupFill" class="warmup-fill" style="width: 0%"></div>
+                </div>
+                <p id="warmupText" class="text-xs text-gray-500">Preparando dados...</p>
+            </div>
+
+            <p class="text-center text-xs text-gray-400 mt-6">Acesso restrito a usuarios autorizados</p>
+        </div>
+    </div>
+
+    <script>
+        // Anti-bot: honeypot + timing
+        const pageLoadTime = Date.now();
+
+        const form = document.getElementById('loginForm');
+        const btnLogin = document.getElementById('btnLogin');
+        const errorBox = document.getElementById('errorBox');
+        const warmupBox = document.getElementById('warmupBox');
+        const warmupFill = document.getElementById('warmupFill');
+        const warmupText = document.getElementById('warmupText');
+        const togglePass = document.getElementById('togglePass');
+        const senhaInput = document.getElementById('senha');
+
+        let isSubmitting = false;
+
+        // Toggle password visibility
+        togglePass.addEventListener('click', () => {
+            const isPassword = senhaInput.type === 'password';
+            senhaInput.type = isPassword ? 'text' : 'password';
+        });
+
+        // Check if already authenticated
+        fetch('/api/check-auth').then(r => r.json()).then(data => {
+            if (data.authenticated) window.location.href = '/';
+        });
+
+        // Prevent paste in password (anti-bot extra)
+        // senhaInput.addEventListener('paste', e => e.preventDefault());
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (isSubmitting) return;
+
+            // Anti-bot: rejeitar submissão muito rápida (<1s)
+            if (Date.now() - pageLoadTime < 1000) {
+                showError('Erro de validação. Tente novamente.');
+                return;
+            }
+
+            const usuario = document.getElementById('usuario').value.trim();
+            const senha = senhaInput.value;
+
+            if (!usuario || !senha) {
+                showError('Preencha usuario e senha.');
+                return;
+            }
+
+            isSubmitting = true;
+            btnLogin.disabled = true;
+            btnLogin.innerHTML = '<span class="spinner"></span> Verificando...';
+            hideError();
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ usuario, senha })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    showError(data.error || 'Erro ao fazer login');
+                    form.classList.add('shake');
+                    setTimeout(() => form.classList.remove('shake'), 500);
+                    return;
+                }
+
+                // Login OK - check warmup status
+                btnLogin.innerHTML = '<span class="spinner"></span> Entrando...';
+                warmupBox.classList.remove('hidden');
+
+                await waitForWarmup();
+                window.location.href = '/';
+            } catch (err) {
+                showError('Erro de conexão. Verifique o servidor.');
+            } finally {
+                isSubmitting = false;
+                btnLogin.disabled = false;
+                btnLogin.textContent = 'Entrar';
+            }
+        });
+
+        async function waitForWarmup() {
+            let attempts = 0;
+            while (attempts < 120) { // max 2 min
+                try {
+                    const res = await fetch('/api/cache-status');
+                    const data = await res.json();
+                    warmupFill.style.width = data.progress.pct + '%';
+                    warmupText.textContent = data.progress.step || 'Preparando...';
+                    if (data.ready) return;
+                } catch {}
+                await new Promise(r => setTimeout(r, 1000));
+                attempts++;
+            }
+        }
+
+        function showError(msg) {
+            errorBox.textContent = msg;
+            errorBox.classList.remove('hidden');
+        }
+        function hideError() {
+            errorBox.classList.add('hidden');
+        }
+
+        // Enter key focus
+        document.getElementById('usuario').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); senhaInput.focus(); }
+        });
+    </script>
+</body>
+</html>
