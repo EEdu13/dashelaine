@@ -387,14 +387,23 @@ function gerarMesesProcessar() {
   return meses;
 }
 
-async function processarBancoDiasTrab(bancoId, mesesProcessar) {
+async function processarBancoDiasTrab(bancoId, mesesProcessar, azurePorCpf) {
   const resultado = {};
   let funcionarios;
   try { funcionarios = await secullumGet('/Funcionarios', bancoId); } catch (e) { return resultado; }
   if (!funcionarios || funcionarios.length === 0) return resultado;
 
   const funcMap = {};
-  for (const f of funcionarios) { const p = normProjeto(getDepartamentoDesc(f.Departamento)); if (p) funcMap[f.Id] = p; }
+  for (const f of funcionarios) {
+    // Prioridade: departamento Secullum, fallback: Azure PROJETO_RH (via CPF)
+    let p = normProjeto(getDepartamentoDesc(f.Departamento));
+    if (!p && azurePorCpf) {
+      const cpf = normCpf(f.Cpf);
+      const az = cpf ? azurePorCpf[cpf] : null;
+      if (az) p = normProjeto(az.PROJETO_RH);
+    }
+    if (p) funcMap[f.Id] = p;
+  }
 
   // Buscar batidas de todos os meses em paralelo (2 por vez para não sobrecarregar)
   for (let i = 0; i < mesesProcessar.length; i += 2) {
@@ -420,14 +429,14 @@ async function processarBancoDiasTrab(bancoId, mesesProcessar) {
   return resultado;
 }
 
-async function calcularDiasTrabalhados() {
+async function calcularDiasTrabalhados(azurePorCpf) {
   console.log('[DiasTrab] Calculando (paralelo)...');
   const t = Date.now();
   const mesesProcessar = gerarMesesProcessar();
 
-  // Todos os bancos em PARALELO
+  // Todos os bancos em PARALELO (com Azure fallback para projeto)
   const bancosResults = await Promise.all(
-    BANCOS_ATIVOS.map(id => processarBancoDiasTrab(id, mesesProcessar))
+    BANCOS_ATIVOS.map(id => processarBancoDiasTrab(id, mesesProcessar, azurePorCpf))
   );
 
   // Merge resultados
@@ -492,7 +501,7 @@ async function preWarm() {
 
     // Fase 3: Dias trabalhados (paralelo, ~30-60s)
     warmupProgress = { status: 'loading', step: 'Calculando dias trabalhados...', pct: 60 };
-    cacheDiasTrab.dados = await calcularDiasTrabalhados();
+    cacheDiasTrab.dados = await calcularDiasTrabalhados(cache.colaboradores.azurePorCpf);
     cacheDiasTrab.lastUpdate = Date.now();
 
     warmupDone = true;
@@ -574,7 +583,8 @@ app.get('/api/refeicao', async (req, res) => {
 app.get('/api/dias-trabalhados', async (req, res) => {
   try {
     if (cacheDiasTrab.dados && cacheDiasTrab.lastUpdate && (Date.now() - cacheDiasTrab.lastUpdate < CACHE_DIAS_TTL)) return res.json(cacheDiasTrab.dados);
-    const dados = await calcularDiasTrabalhados();
+    const azPorCpf = cache.colaboradores ? cache.colaboradores.azurePorCpf : null;
+    const dados = await calcularDiasTrabalhados(azPorCpf);
     cacheDiasTrab = { dados, lastUpdate: Date.now() };
     res.json(dados);
   } catch (err) { console.error('[DiasTrab] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
