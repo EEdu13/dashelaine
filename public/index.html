@@ -1164,7 +1164,8 @@
                     options: {
                         responsive: true,
                         maintainAspectRatio: true,
-                        interaction: { mode: 'index', intersect: false },
+                        animation: { duration: 0 },
+                        interaction: { mode: 'nearest', intersect: true },
                         plugins: {
                             legend: { display: selecionados.length > 1, position: 'top', labels: { usePointStyle: true, padding: 15 } },
                             datalabels: {
