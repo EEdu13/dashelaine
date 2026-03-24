@@ -199,30 +199,76 @@ let warmupProgress = { status: 'starting', step: '', pct: 0 };
 // ============================================================
 let secullumToken = null;
 let tokenExpiry = 0;
+let tokenPromise = null; // Serializar auth - evitar chamadas simultâneas
 
 async function getSecullumToken() {
   if (secullumToken && Date.now() < tokenExpiry) return secullumToken;
-  const res = await fetch(SECULLUM_AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=password&username=${encodeURIComponent(SECULLUM_USER)}&password=${encodeURIComponent(SECULLUM_PASS)}&client_id=3`,
-    signal: AbortSignal.timeout(15000)
-  });
-  if (!res.ok) throw new Error(`Secullum auth failed: ${res.status}`);
-  const data = await res.json();
-  secullumToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-  return secullumToken;
+  // Se já tem uma autenticação em andamento, esperar ela
+  if (tokenPromise) return tokenPromise;
+  tokenPromise = _fetchSecullumToken();
+  try { return await tokenPromise; } finally { tokenPromise = null; }
+}
+
+async function _fetchSecullumToken() {
+  // Retry com backoff (3 tentativas)
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    try {
+      const res = await fetch(SECULLUM_AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=password&username=${encodeURIComponent(SECULLUM_USER)}&password=${encodeURIComponent(SECULLUM_PASS)}&client_id=3`,
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) {
+        if (tentativa < 3) {
+          console.warn(`[Secullum] Auth tentativa ${tentativa} falhou (${res.status}), retry em ${tentativa * 2}s...`);
+          await new Promise(r => setTimeout(r, tentativa * 2000));
+          continue;
+        }
+        throw new Error(`Secullum auth failed: ${res.status}`);
+      }
+      const data = await res.json();
+      secullumToken = data.access_token;
+      tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+      return secullumToken;
+    } catch (err) {
+      if (tentativa >= 3) throw err;
+      console.warn(`[Secullum] Auth tentativa ${tentativa} erro: ${err.message}, retry em ${tentativa * 2}s...`);
+      await new Promise(r => setTimeout(r, tentativa * 2000));
+    }
+  }
 }
 
 async function secullumGet(endpoint, bancoId) {
-  const token = await getSecullumToken();
-  const res = await fetch(`${SECULLUM_API_URL}${endpoint}`, {
-    headers: { Authorization: `Bearer ${token}`, secullumidbancoselecionado: String(bancoId) },
-    signal: AbortSignal.timeout(60000)
-  });
-  if (!res.ok) { console.warn(`[Secullum] Erro ${res.status} em ${endpoint} banco ${bancoId}`); return []; }
-  return res.json();
+  // Retry para requests GET também (2 tentativas)
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    try {
+      const token = await getSecullumToken();
+      const res = await fetch(`${SECULLUM_API_URL}${endpoint}`, {
+        headers: { Authorization: `Bearer ${token}`, secullumidbancoselecionado: String(bancoId) },
+        signal: AbortSignal.timeout(60000)
+      });
+      if (!res.ok) {
+        if (res.status === 401 && tentativa < 2) {
+          // Token expirou, forçar renovação
+          secullumToken = null; tokenExpiry = 0;
+          continue;
+        }
+        console.warn(`[Secullum] Erro ${res.status} em ${endpoint} banco ${bancoId}`);
+        return [];
+      }
+      return await res.json();
+    } catch (err) {
+      if (tentativa < 2) {
+        console.warn(`[Secullum] Retry ${endpoint} banco ${bancoId}: ${err.message}`);
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+      console.warn(`[Secullum] Falha ${endpoint} banco ${bancoId}: ${err.message}`);
+      return [];
+    }
+  }
+  return [];
 }
 
 // ============================================================
@@ -269,20 +315,26 @@ async function carregarDadosBase() {
   console.log('[Colaboradores] Carregando...');
   const t = Date.now();
 
-  // SQL e Secullum em PARALELO
-  const [azureResult, ...bancosResults] = await Promise.all([
-    getPool().then(p => p.request().query('SELECT * FROM COLABORADORES')),
-    ...BANCOS_ATIVOS.map(id => secullumGet('/Funcionarios', id).catch(e => { console.warn(`[Secullum] Erro banco ${id}:`, e.message); return []; }))
-  ]);
-
+  // SQL primeiro, depois Secullum SEQUENCIAL (evitar 500 por chamadas simultâneas)
+  const pool = await getPool();
+  const azureResult = await pool.request().query('SELECT * FROM COLABORADORES');
   const colaboradoresAzure = azureResult.recordset;
+
+  // Garantir token antes de buscar funcionários
+  await getSecullumToken();
+
   const todosFuncionarios = [];
-  BANCOS_ATIVOS.forEach((bancoId, i) => {
-    const funcs = bancosResults[i] || [];
-    console.log(`[Secullum] Banco ${bancoId}: ${funcs.length} func`);
-    funcs.forEach(f => { f._bancoId = bancoId; });
-    todosFuncionarios.push(...funcs);
-  });
+  for (const bancoId of BANCOS_ATIVOS) {
+    try {
+      const funcs = await secullumGet('/Funcionarios', bancoId);
+      console.log(`[Secullum] Banco ${bancoId}: ${funcs.length} func`);
+      funcs.forEach(f => { f._bancoId = bancoId; });
+      todosFuncionarios.push(...funcs);
+    } catch (e) {
+      console.warn(`[Secullum] Erro banco ${bancoId}:`, e.message);
+    }
+    await new Promise(r => setTimeout(r, 300)); // Pequena pausa entre bancos
+  }
 
   // Manter TODOS os registros por CPF (mesmo CPF pode ter múltiplas passagens em projetos/bancos)
   const funcsPorCpf = {};
@@ -430,14 +482,20 @@ async function processarBancoDiasTrab(bancoId, mesesProcessar, azurePorCpf) {
 }
 
 async function calcularDiasTrabalhados(azurePorCpf) {
-  console.log('[DiasTrab] Calculando (paralelo)...');
+  console.log('[DiasTrab] Calculando (sequencial por banco)...');
   const t = Date.now();
   const mesesProcessar = gerarMesesProcessar();
 
-  // Todos os bancos em PARALELO (com Azure fallback para projeto)
-  const bancosResults = await Promise.all(
-    BANCOS_ATIVOS.map(id => processarBancoDiasTrab(id, mesesProcessar, azurePorCpf))
-  );
+  // Garantir token antes
+  await getSecullumToken();
+
+  // Bancos SEQUENCIAL (evitar 500 na API Secullum)
+  const bancosResults = [];
+  for (const id of BANCOS_ATIVOS) {
+    const r = await processarBancoDiasTrab(id, mesesProcessar, azurePorCpf);
+    bancosResults.push(r);
+    await new Promise(r => setTimeout(r, 300));
+  }
 
   // Merge resultados
   const merged = {};
