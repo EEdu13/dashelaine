@@ -1632,8 +1632,9 @@
                         const total = totalImovel(d);
                         const colab = getColabProjeto(d.PROJETO, colabFilt);
                         const alojadosReal = d.ALOJADOS || 0;
-                        const alojados = alojadosReal > 0 ? alojadosReal : colab;
-                        const fonteAloj = alojadosReal > 0 ? 'real' : 'colab';
+                        const isApoio = d.TIPO_IMOVEL === 'IMOVEL APOIO';
+                        const alojados = isApoio ? 0 : (alojadosReal > 0 ? alojadosReal : colab);
+                        const fonteAloj = isApoio ? 'apoio' : (alojadosReal > 0 ? 'real' : 'colab');
                         const alojStr = fonteAloj === 'colab'
                             ? `<span class="text-purple-600" title="Total de colaboradores do projeto">${alojados} *</span>`
                             : `${alojados}`;
