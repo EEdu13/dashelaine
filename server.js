@@ -146,10 +146,23 @@ app.get('/api/check-auth', (req, res) => {
   }
 });
 
-// Auth middleware - protege todas as rotas /api/ exceto login/logout/check-auth/health
+// Rotas públicas (antes do authMiddleware)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), warmup: warmupDone,
+    cache: { colaboradores: !!cache.colaboradores, imoveis: !!cacheImoveis.dados, refeicao: !!cacheRefeicao.dados, diasTrab: !!cacheDiasTrab.dados }
+  });
+});
+
+app.get('/api/cache-status', (req, res) => {
+  res.json({
+    ready: warmupDone,
+    progress: warmupProgress,
+    cache: { imoveis: !!cacheImoveis.dados, refeicao: !!cacheRefeicao.dados, colaboradores: !!cache.colaboradores, diasTrab: !!cacheDiasTrab.dados }
+  });
+});
+
+// Auth middleware - protege todas as rotas /api/ exceto login/logout/check-auth
 function authMiddleware(req, res, next) {
-  const open = ['/api/login', '/api/logout', '/api/check-auth', '/api/health', '/api/cache-status'];
-  if (open.includes(req.path)) return next();
   const token = req.cookies.token;
   if (!token) return res.status(401).json({ error: 'Não autenticado' });
   try {
@@ -292,6 +305,8 @@ function mesAnoToDate(mesAno) {
 
 function normCpf(cpf) { return (cpf || '').replace(/[\.\-\/\s]/g, ''); }
 
+function normMesLabel(mes) { return (mes || '').replace(/\bMARCO\b/g, 'MARÇO'); }
+
 function normProjeto(proj) {
   if (!proj) return null;
   const s = String(proj).trim();
@@ -308,119 +323,55 @@ function getDepartamentoDesc(dept) {
 }
 
 // ============================================================
-// === DATA LOADING (com paralelismo) ===
+// === DATA LOADING ===
 // ============================================================
 
-async function carregarDadosBase() {
-  console.log('[Colaboradores] Carregando...');
+async function carregarColaboradoresHistorico() {
+  console.log('[Colaboradores] Carregando do histórico SQL...');
   const t = Date.now();
-
-  // SQL primeiro, depois Secullum SEQUENCIAL (evitar 500 por chamadas simultâneas)
   const pool = await getPool();
-  const azureResult = await pool.request().query('SELECT * FROM COLABORADORES');
-  const colaboradoresAzure = azureResult.recordset;
 
-  // Garantir token antes de buscar funcionários
-  await getSecullumToken();
-
-  const todosFuncionarios = [];
-  for (const bancoId of BANCOS_ATIVOS) {
-    try {
-      const funcs = await secullumGet('/Funcionarios', bancoId);
-      console.log(`[Secullum] Banco ${bancoId}: ${funcs.length} func`);
-      funcs.forEach(f => { f._bancoId = bancoId; });
-      todosFuncionarios.push(...funcs);
-    } catch (e) {
-      console.warn(`[Secullum] Erro banco ${bancoId}:`, e.message);
-    }
-    await new Promise(r => setTimeout(r, 300)); // Pequena pausa entre bancos
-  }
-
-  // Manter TODOS os registros por CPF (mesmo CPF pode ter múltiplas passagens em projetos/bancos)
-  const funcsPorCpf = {};
-  for (const f of todosFuncionarios) {
-    const cpf = normCpf(f.Cpf);
-    if (!cpf) continue;
-    if (!funcsPorCpf[cpf]) funcsPorCpf[cpf] = [];
-    funcsPorCpf[cpf].push(f);
-  }
-
+  // azurePorCpf ainda é necessário como fallback para dias trabalhados
+  const azureResult = await pool.request().query('SELECT CPF, PROJETO, PROJETO_RH, COORDENADOR, DATA_ADMISSAO FROM COLABORADORES');
   const azurePorCpf = {};
-  for (const c of colaboradoresAzure) { const cpf = normCpf(c.CPF); if (cpf) azurePorCpf[cpf] = c; }
-
-  const projetoCoordenador = {};
-  for (const c of colaboradoresAzure) {
-    const coord = (c.COORDENADOR || '').trim();
-    if (!coord) continue;
-    const proj = normProjeto(c.PROJETO_RH);
-    if (proj && !projetoCoordenador[proj]) projetoCoordenador[proj] = coord;
+  for (const c of azureResult.recordset) {
+    const cpf = normCpf(c.CPF);
+    if (cpf) azurePorCpf[cpf] = c;
   }
 
-  const azureSemSecullum = colaboradoresAzure.filter(c => { const cpf = normCpf(c.CPF); return cpf && !funcsPorCpf[cpf]; });
+  // Média diária de CPFs únicos por projeto/mês
+  const histResult = await pool.request().query(`
+    WITH daily_counts AS (
+      SELECT
+        COALESCE(NULLIF(PROJETO_RH, ''), PROJETO) AS PROJETO,
+        MAX(COORDENADOR) AS COORDENADOR,
+        ATUALIZADO_EM,
+        COUNT(DISTINCT CPF) AS qtd_dia
+      FROM COLABORADORES_HISTORICO
+      WHERE (PROJETO_RH IS NOT NULL OR PROJETO IS NOT NULL)
+      GROUP BY COALESCE(NULLIF(PROJETO_RH, ''), PROJETO), ATUALIZADO_EM
+    )
+    SELECT
+      PROJETO,
+      MAX(COORDENADOR) AS COORDENADOR,
+      YEAR(ATUALIZADO_EM) AS ano,
+      MONTH(ATUALIZADO_EM) AS mes_num,
+      ROUND(AVG(CAST(qtd_dia AS float)), 0) AS QUANTIDADE
+    FROM daily_counts
+    WHERE PROJETO IS NOT NULL AND PROJETO != '' AND PROJETO != 'ABANDONO'
+    GROUP BY PROJETO, YEAR(ATUALIZADO_EM), MONTH(ATUALIZADO_EM)
+    ORDER BY ano, mes_num, PROJETO
+  `);
 
-  console.log(`[Colaboradores] ${Object.keys(funcsPorCpf).length} CPFs únicos, ${todosFuncionarios.length} registros em ${((Date.now() - t) / 1000).toFixed(1)}s`);
-  return { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum };
-}
+  const dados = histResult.recordset.map(r => {
+    const proj = normProjeto(r.PROJETO);
+    if (!proj) return null;
+    const mesLabel = `${NOMES_MESES[r.mes_num - 1]}/${String(r.ano).slice(-2)}`;
+    return { DATA: mesLabel, PROJETO: proj, QUANTIDADE: Math.round(r.QUANTIDADE), COORDENADOR: r.COORDENADOR || null };
+  }).filter(Boolean);
 
-function calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, mesesList) {
-  const result = [];
-  for (const mesAno of mesesList) {
-    const dataMes = mesAnoToDate(mesAno);
-    const primeiroDia = new Date(dataMes.getFullYear(), dataMes.getMonth(), 1);
-    const ultimoDia = new Date(dataMes.getFullYear(), dataMes.getMonth() + 1, 0);
-    const cont = {};
-    const cpfContado = new Set();
-    function inc(projeto, coordenador) {
-      if (!cont[projeto]) cont[projeto] = { qtd: 0, coord: null };
-      cont[projeto].qtd++;
-      if (coordenador && !cont[projeto].coord) cont[projeto].coord = coordenador;
-    }
-    // Para cada CPF, verificar TODOS os registros e usar o que estava ativo naquele mês
-    for (const [cpf, registros] of Object.entries(funcsPorCpf)) {
-      const ativosNoMes = registros.filter(f => {
-        const adm = f.Admissao ? new Date(f.Admissao) : null;
-        const dem = f.Demissao ? new Date(f.Demissao) : null;
-        if (!adm || adm > ultimoDia) return false;
-        if (dem && dem < primeiroDia) return false;
-        return true;
-      });
-      if (ativosNoMes.length === 0 || cpfContado.has(cpf)) continue;
-      cpfContado.add(cpf);
-      // Prioridade: demitido NESTE mês > ativo (sem demissão) > qualquer
-      const func = ativosNoMes.find(f => {
-        if (!f.Demissao) return false;
-        const dem = new Date(f.Demissao);
-        return dem >= primeiroDia && dem <= ultimoDia;
-      }) || ativosNoMes.find(f => !f.Demissao) || ativosNoMes[0];
-
-      let proj = null, coord = null;
-      const az = azurePorCpf[cpf];
-      // Demitidos: usar departamento Secullum (histórico). Ativos: usar Azure (atual)
-      if (func.Demissao) {
-        proj = normProjeto(getDepartamentoDesc(func.Departamento));
-        if (!proj && az) proj = normProjeto(az.PROJETO_RH);
-      } else {
-        if (az) proj = normProjeto(az.PROJETO_RH);
-        if (!proj) proj = normProjeto(getDepartamentoDesc(func.Departamento));
-      }
-      if (az) coord = (az.COORDENADOR || '').trim() || null;
-      if (!coord && proj) coord = projetoCoordenador[proj] || null;
-      if (proj) inc(proj, coord);
-    }
-    // Funcionários SOMENTE no Azure (sem Secullum)
-    for (const az of azureSemSecullum) {
-      const cpf = normCpf(az.CPF);
-      if (cpfContado.has(cpf)) continue;
-      const adm = az.DATA_ADMISSAO ? new Date(az.DATA_ADMISSAO) : null;
-      if (!adm || adm > ultimoDia) continue;
-      const proj = normProjeto(az.PROJETO_RH);
-      if (proj) { cpfContado.add(cpf); inc(proj, (az.COORDENADOR || '').trim() || null); }
-    }
-    Object.entries(cont).sort((a, b) => Number(a[0]) - Number(b[0])).forEach(([p, info]) => {
-      result.push({ DATA: mesAno, PROJETO: Number(p), QUANTIDADE: info.qtd, COORDENADOR: info.coord || projetoCoordenador[Number(p)] || null });
-    });
-  }
-  return result;
+  console.log(`[Colaboradores] ${dados.length} registros em ${((Date.now() - t) / 1000).toFixed(1)}s`);
+  return { dados, azurePorCpf };
 }
 
 // Dias trabalhados - com paralelismo por banco
@@ -530,19 +481,19 @@ async function preWarm() {
 
     warmupProgress = { status: 'loading', step: 'Carregando imóveis e refeições...', pct: 10 };
     const [imoveisResult, refeicaoResult, alojadosResult] = await Promise.all([
-      pool.request().query(`SELECT ID, MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`),
-      pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`),
+      pool.request().query(`SELECT ID, REPLACE(MES, 'MARCO', N'MARÇO') as MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`),
+      pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, REPLACE(MES_NOME, 'MARCO', N'MARÇO') as MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`),
       pool.request().query(`SELECT PROJETO_RH as PROJETO, COUNT(*) as ALOJADOS_APROX FROM COLABORADORES WHERE SITUACAO = '1' AND FUNCAO_EXECUTANTE IN ('TRABALHADOR','OPERADOR','MOTORISTA','MECANICO','LIDER') GROUP BY PROJETO_RH ORDER BY PROJETO_RH`)
     ]);
 
     cacheImoveis.dados = imoveisResult.recordset.map(r => {
       const anoCurto = r.MES_ANO ? r.MES_ANO.split('/')[1].slice(-2) : '';
-      return { PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, IMOVEL: r.IMOVEL, ENDERECO: r.ENDERECO, TIPO_IMOVEL: r.TIPO_IMOVEL || null, DESTINACAO: r.DESTINACAO, MES: `${r.MES}/${anoCurto}`, MES_ANO: r.MES_ANO, ALUGUEL: Number(r.ALUGUEL)||0, ENERGIA: Number(r.ENERGIA)||0, AGUA: Number(r.AGUA)||0, INTERNET: Number(r.INTERNET)||0, IPTU: Number(r.IPTU)||0, MANUTENCAO: Number(r.MANUTENCAO)||0, ALOJADOS: r.ALOJADOS||0, CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS||0 };
+      return { PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, IMOVEL: r.IMOVEL, ENDERECO: r.ENDERECO, TIPO_IMOVEL: r.TIPO_IMOVEL || null, DESTINACAO: r.DESTINACAO, MES: normMesLabel(`${r.MES}/${anoCurto}`), MES_ANO: r.MES_ANO, ALUGUEL: Number(r.ALUGUEL)||0, ENERGIA: Number(r.ENERGIA)||0, AGUA: Number(r.AGUA)||0, INTERNET: Number(r.INTERNET)||0, IPTU: Number(r.IPTU)||0, MANUTENCAO: Number(r.MANUTENCAO)||0, ALOJADOS: r.ALOJADOS||0, CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS||0 };
     });
     cacheImoveis.lastUpdate = Date.now();
 
     cacheRefeicao.dados = refeicaoResult.recordset.map(r => ({
-      PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, CIDADE: r.CIDADE, FORNECEDOR: r.FORNECEDOR, TIPO_REFEICAO: r.TIPO_REFEICAO, VALOR_UNITARIO: Number(r.VALOR_UNITARIO)||0, QUANTIDADE: r.QUANTIDADE, VALOR: Number(r.VALOR_TOTAL)||0, MES: r.MES_NOME, QUINZENA: r.QUINZENA, CLIENTE: r.CLIENTE
+      PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, CIDADE: r.CIDADE, FORNECEDOR: r.FORNECEDOR, TIPO_REFEICAO: r.TIPO_REFEICAO, VALOR_UNITARIO: Number(r.VALOR_UNITARIO)||0, QUANTIDADE: r.QUANTIDADE, VALOR: Number(r.VALOR_TOTAL)||0, MES: normMesLabel(r.MES_NOME), QUINZENA: r.QUINZENA, CLIENTE: r.CLIENTE
     }));
     cacheRefeicao.lastUpdate = Date.now();
 
@@ -552,9 +503,9 @@ async function preWarm() {
 
     console.log(`[PreWarm] SQL OK: ${cacheImoveis.dados.length} imóveis, ${cacheRefeicao.dados.length} refeições`);
 
-    // Fase 2: Secullum Colaboradores (paralelo, ~5-10s)
-    warmupProgress = { status: 'loading', step: 'Carregando colaboradores (Secullum)...', pct: 30 };
-    cache.colaboradores = await carregarDadosBase();
+    // Fase 2: Colaboradores do histórico SQL (~1-2s)
+    warmupProgress = { status: 'loading', step: 'Carregando colaboradores (histórico)...', pct: 30 };
+    cache.colaboradores = await carregarColaboradoresHistorico();
     cache.lastUpdate = Date.now();
 
     // Fase 3: Dias trabalhados (paralelo, ~30-60s)
@@ -576,39 +527,17 @@ async function preWarm() {
 // === ENDPOINTS ===
 // ============================================================
 
-app.get('/api/cache-status', (req, res) => {
-  res.json({
-    ready: warmupDone,
-    progress: warmupProgress,
-    cache: {
-      imoveis: !!cacheImoveis.dados,
-      refeicao: !!cacheRefeicao.dados,
-      colaboradores: !!cache.colaboradores,
-      diasTrab: !!cacheDiasTrab.dados
-    }
-  });
-});
-
 app.get('/api/colaboradores', async (req, res) => {
   try {
     if (!cache.colaboradores || !cache.lastUpdate || (Date.now() - cache.lastUpdate >= CACHE_TTL)) {
       if (cache.updating) {
-        if (cache.colaboradores) {
-          const { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
-          const agora = new Date();
-          const ml = gerarMeses(new Date(agora.getFullYear(), agora.getMonth() - 5, 1), agora);
-          return res.json({ meses: ml, dados: calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, ml) });
-        }
+        if (cache.colaboradores) return res.json({ dados: cache.colaboradores.dados });
         return res.status(503).json({ error: 'Dados sendo atualizados' });
       }
       cache.updating = true;
-      try { cache.colaboradores = await carregarDadosBase(); cache.lastUpdate = Date.now(); } finally { cache.updating = false; }
+      try { cache.colaboradores = await carregarColaboradoresHistorico(); cache.lastUpdate = Date.now(); } finally { cache.updating = false; }
     }
-    const { funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum } = cache.colaboradores;
-    const agora = new Date();
-    const inicio = req.query.inicio ? new Date(...req.query.inicio.split('-').map((v,i) => i===1 ? Number(v)-1 : Number(v))) : new Date(agora.getFullYear(), agora.getMonth()-5, 1);
-    const fim = req.query.fim ? new Date(...req.query.fim.split('-').map((v,i) => i===1 ? Number(v)-1 : Number(v))) : new Date(agora.getFullYear(), agora.getMonth(), 1);
-    res.json({ meses: gerarMeses(inicio, fim), dados: calcularColaboradoresPorMes(funcsPorCpf, azurePorCpf, projetoCoordenador, azureSemSecullum, gerarMeses(inicio, fim)) });
+    res.json({ dados: cache.colaboradores.dados });
   } catch (err) {
     cache.updating = false;
     console.error('[Colaboradores] Erro:', err.message);
@@ -620,7 +549,7 @@ app.get('/api/imoveis', async (req, res) => {
   try {
     if (cacheImoveis.dados && cacheImoveis.lastUpdate && (Date.now() - cacheImoveis.lastUpdate < CACHE_SQL_TTL)) return res.json(cacheImoveis.dados);
     const pool = await getPool();
-    const result = await pool.request().query(`SELECT ID, MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`);
+    const result = await pool.request().query(`SELECT ID, REPLACE(MES, 'MARCO', N'MARÇO') as MES, MES_ANO, PROJETO, COORDENADOR, IMOVEL, ENDERECO, TIPO_IMOVEL, DESTINACAO, ALUGUEL, ENERGIA, AGUA, INTERNET, IPTU, MANUTENCAO, ALOJADOS, CAPACIDADE_ALOJADOS FROM CUSTOS_IMOVEIS ORDER BY MES_ANO, PROJETO, ENDERECO`);
     cacheImoveis.dados = result.recordset.map(r => { const a = r.MES_ANO ? r.MES_ANO.split('/')[1].slice(-2) : ''; return { PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, IMOVEL: r.IMOVEL, ENDERECO: r.ENDERECO, TIPO_IMOVEL: r.TIPO_IMOVEL||null, DESTINACAO: r.DESTINACAO, MES: `${r.MES}/${a}`, MES_ANO: r.MES_ANO, ALUGUEL: Number(r.ALUGUEL)||0, ENERGIA: Number(r.ENERGIA)||0, AGUA: Number(r.AGUA)||0, INTERNET: Number(r.INTERNET)||0, IPTU: Number(r.IPTU)||0, MANUTENCAO: Number(r.MANUTENCAO)||0, ALOJADOS: r.ALOJADOS||0, CAPACIDADE_ALOJADOS: r.CAPACIDADE_ALOJADOS||0 }; });
     cacheImoveis.lastUpdate = Date.now();
     res.json(cacheImoveis.dados);
@@ -631,7 +560,7 @@ app.get('/api/refeicao', async (req, res) => {
   try {
     if (cacheRefeicao.dados && cacheRefeicao.lastUpdate && (Date.now() - cacheRefeicao.lastUpdate < CACHE_SQL_TTL)) return res.json(cacheRefeicao.dados);
     const pool = await getPool();
-    const result = await pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`);
+    const result = await pool.request().query(`SELECT PROJETO, COORDENADOR, CIDADE, FORNECEDOR, TIPO_REFEICAO, VALOR_UNITARIO, QUANTIDADE, VALOR_TOTAL, REPLACE(MES_NOME, 'MARCO', N'MARÇO') as MES_NOME, QUINZENA, NUMERO_QUINZENA, CLIENTE FROM PAG_REFEICAO ORDER BY MES_REF, PROJETO, FORNECEDOR, TIPO_REFEICAO`);
     cacheRefeicao.dados = result.recordset.map(r => ({ PROJETO: r.PROJETO, COORDENADOR: r.COORDENADOR, CIDADE: r.CIDADE, FORNECEDOR: r.FORNECEDOR, TIPO_REFEICAO: r.TIPO_REFEICAO, VALOR_UNITARIO: Number(r.VALOR_UNITARIO)||0, QUANTIDADE: r.QUANTIDADE, VALOR: Number(r.VALOR_TOTAL)||0, MES: r.MES_NOME, QUINZENA: r.QUINZENA, CLIENTE: r.CLIENTE }));
     cacheRefeicao.lastUpdate = Date.now();
     res.json(cacheRefeicao.dados);
@@ -641,6 +570,8 @@ app.get('/api/refeicao', async (req, res) => {
 app.get('/api/dias-trabalhados', async (req, res) => {
   try {
     if (cacheDiasTrab.dados && cacheDiasTrab.lastUpdate && (Date.now() - cacheDiasTrab.lastUpdate < CACHE_DIAS_TTL)) return res.json(cacheDiasTrab.dados);
+    // PreWarm ainda calculando — retorna vazio para não bloquear o browser
+    if (!warmupDone) return res.json([]);
     const azPorCpf = cache.colaboradores ? cache.colaboradores.azurePorCpf : null;
     const dados = await calcularDiasTrabalhados(azPorCpf);
     cacheDiasTrab = { dados, lastUpdate: Date.now() };
@@ -658,12 +589,6 @@ app.get('/api/alojados-aprox', async (req, res) => {
     cacheAlojados.lastUpdate = Date.now();
     res.json(cacheAlojados.dados);
   } catch (err) { console.error('[Alojados] Erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), warmup: warmupDone,
-    cache: { colaboradores: !!cache.colaboradores, imoveis: !!cacheImoveis.dados, refeicao: !!cacheRefeicao.dados, diasTrab: !!cacheDiasTrab.dados }
-  });
 });
 
 // Graceful shutdown
