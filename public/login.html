@@ -9,7 +9,7 @@
     <style>
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .login-bg {
-            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #1e40af 100%);
+            background: linear-gradient(135deg, #14532d 0%, #16a34a 50%, #166534 100%);
             min-height: 100vh;
         }
         .login-card {
@@ -22,18 +22,18 @@
             border: 2px solid #e5e7eb;
         }
         .input-field:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+            border-color: #22c55e;
+            box-shadow: 0 0 0 3px rgba(34,197,94,0.1);
             outline: none;
         }
         .btn-login {
-            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            background: linear-gradient(135deg, #16a34a, #15803d);
             transition: all 0.2s;
         }
         .btn-login:hover:not(:disabled) {
-            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            background: linear-gradient(135deg, #15803d, #166534);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(37,99,235,0.4);
+            box-shadow: 0 4px 12px rgba(22,163,74,0.4);
         }
         .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
         .shake { animation: shake 0.5s ease-in-out; }
@@ -47,7 +47,7 @@
         .spinner { width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .warmup-bar { height: 4px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
-        .warmup-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #2563eb); transition: width 0.5s ease; border-radius: 2px; }
+        .warmup-fill { height: 100%; background: linear-gradient(90deg, #22c55e, #16a34a); transition: width 0.5s ease; border-radius: 2px; }
     </style>
 </head>
 <body class="login-bg flex items-center justify-content-center">
@@ -55,8 +55,8 @@
         <div class="login-card rounded-2xl p-8 w-full max-w-md">
             <!-- Logo / Header -->
             <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-                    <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+                    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
                     </svg>
                 </div>
